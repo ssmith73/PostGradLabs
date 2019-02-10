@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 15
+VisualStudioVersion = 15.0.28307.271
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "nucleoPostGrad", "nucleoPostGrad\nucleoPostGrad.vcxproj", "{F2FA02C5-EDEC-429A-9E63-3D04B1351A51}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|VisualGDB = Debug|VisualGDB
+		Release|VisualGDB = Release|VisualGDB
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{F2FA02C5-EDEC-429A-9E63-3D04B1351A51}.Debug|VisualGDB.ActiveCfg = Debug|VisualGDB
+		{F2FA02C5-EDEC-429A-9E63-3D04B1351A51}.Debug|VisualGDB.Build.0 = Debug|VisualGDB
+		{F2FA02C5-EDEC-429A-9E63-3D04B1351A51}.Release|VisualGDB.ActiveCfg = Release|VisualGDB
+		{F2FA02C5-EDEC-429A-9E63-3D04B1351A51}.Release|VisualGDB.Build.0 = Release|VisualGDB
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {6E648805-8939-4EBA-BE78-5EE862A42788}
+	EndGlobalSection
+EndGlobal
