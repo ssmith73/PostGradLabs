@@ -1,5 +1,6 @@
 #include <stm32l4xx.h>
 
+//Work submitted for lab1
 #ifdef __cplusplus
 extern "C"
 #endif
@@ -53,8 +54,8 @@ int main(void)
 	DIRECTIONS direction = FORWARD;
 	__disable_irq();
 	/* Configure the clocks - using MSI as SYSCLK @16MHz */
-	RCC->CR 		 	&= 	0xFFFFFF07;  //Clear ~MSIRANGE bits and MSIRGSEL bit
-	RCC->CR 		 	|= 	0x00000088;  //Set MSI to 16MHz and MSIRGSEL bit
+	RCC->CR 		&= 	0xFFFFFF0e;  //Clear ~MSIRANGE bits and MSIRGSEL bit
+	RCC->CR 	 	|= 	0x00000088;  //Set MSI to 16MHz and MSIRGSEL bit
 
 	RCC->AHB2ENR 	|= 	0x00000001;  //Enable PA5 clocks - for on-board LED
 	
