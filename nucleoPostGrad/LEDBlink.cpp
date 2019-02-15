@@ -19,7 +19,6 @@ void initTim2(void);
 void initUserSw(void);
 void initPbInterrupt(void);
 
-void toggleLed(uint8_t);
 
 typedef enum
 {
@@ -50,7 +49,6 @@ typedef enum
 
 int main(void)
 {
-	STATES current_state = IDLE_STATE;
 	STATES next_state = IDLE_STATE;
 	DIRECTIONS direction = FORWARD;
 	__disable_irq();
@@ -84,7 +82,6 @@ int main(void)
 
 			case IDLE_STATE:	
 				next_state = LED2_ON_STATE;
-
 				break;
 								
 			case LED2_ON_STATE: 
@@ -157,37 +154,7 @@ int main(void)
 				
 			}
 		}
-
-			
 	}
-	
-	/*
-	for (;;)
-	{
-		if (buttonInterrupt == true)
-		{
-			
-			for (uint8_t i = 0; i < 5; i++)
-			{
-				GPIOA->BSRR |= 0x00000020;  	//Set the GPIO
-				delayMs(DELAY); 
-				GPIOA->BSRR |= 0x00200000;    //Clear the GPIO
-				delayMs(DELAY);
-			}
-			buttonInterrupt = false;
-		}
-		else
-		{
-			for (uint8_t led = 2;led < 10;led++)
-			{
-				toggleLed(led);
-			}
-			for (uint8_t led = 9;led > 1;led--)
-			{
-				toggleLed(led);
-			}
-		}
-	}*/
 }
 
 // delay in mS, off a sysTick - assumes HSI @ 16MHz
@@ -211,7 +178,7 @@ void delayMs(int n) {
 void initTim2() {
 	/* Interrupt for Timer 2 is #28*/
 	RCC->APB1ENR1	|= 0x1;   		//Enable timer 2
-	TIM2->PSC 		= 8000 - 1;	//Prescalar value - divide 16MHz by 16000
+	TIM2->PSC 		= 16000 - 1;	//Prescalar value - divide 16MHz by 16000
 	TIM2->ARR 		= 1000 - 1;		//Reload value
 	TIM2->CR1		= 1;			//enable timer
 	TIM2->DIER      |= 1;			//enable interrupt
@@ -282,101 +249,6 @@ LED9 - A4 - PC0
 
 }
 
-void toggleLed(uint8_t led)
-{
-/*
-The LEDs are connected as follows:
-
-LED0, LED1 not connected
-LED2 - D2 - PA10
-LED3 - D3 - PB3
-LED4 - D4 - PB5
-LED5 - D5 - PB4
-LED6 - D6 - PB10
-LED7 - D7 - PA8
-LED8 - A5 - PC1
-LED9 - A4 - PC0
-*/
-	
-	switch (led)
-	{
-		
-	case 2: {
-			 //A10
-//			GPIOA->BSRR |= 0x00000400;  	//Set the GPIO
-//			delayMs(DELAY); 
-//			GPIOA->BSRR |= 0x04000000;    //Clear the GPIO
-//			delayMs(DELAY);
-			GPIOA->ODR |= 0x00000400;  	//Set the GPIO
-			delayMs(DELAY); 
-			GPIOA->BRR |= 0x00000400;  	//Set the GPIO
-			//GPIOA->BSRR |= 0x04000000;    //Clear the GPIO
-			delayMs(DELAY);
-		}
-		break;
-
-	case 3: {
-			//B3
-			GPIOB->BSRR |= 0x00000008;  	//Set the GPIO
-			delayMs(DELAY); 
-			GPIOB->BSRR |= 0x00080000;    //Clear the GPIO
-			delayMs(DELAY);
-		}
-		break;
-	case 4: {
-			//B5
-			GPIOB->BSRR |= 0x00000020;  	//Set the GPIO
-			delayMs(DELAY); 
-			GPIOB->BSRR |= 0x00200000;    //Clear the GPIO
-			delayMs(DELAY);
-		}
-		break;
-	case 5: {
-			 //B4
-			GPIOB->BSRR |= 0x00000010;  	//Set the GPIO
-			delayMs(DELAY); 
-			GPIOB->BSRR |= 0x00100000;    //Clear the GPIO
-			delayMs(DELAY);
-		}
-		break;
-	case 6: {
-			 //B10
-			GPIOB->BSRR |= 0x00000400;  	//Set the GPIO
-			delayMs(DELAY); 
-			GPIOB->BSRR |= 0x04000000;    //Clear the GPIO
-			delayMs(DELAY);
-		}
-		break;
-	case 7: {
-			 //A8
-			GPIOA->BSRR |= 0x00000100;  	//Set the GPIO
-			delayMs(DELAY); 
-			GPIOA->BSRR |= 0x01000000;    //Clear the GPIO
-			delayMs(DELAY);
-		}
-		break;
-	case 8: {
-			 //C1
-			GPIOC->BSRR |= 0x00000002;  	//Set the GPIO
-			delayMs(DELAY); 
-			GPIOC->BSRR |= 0x00020000;    //Clear the GPIO
-			delayMs(DELAY);
-		}
-		break;
-	case 9: {
-			 //C0
-			GPIOC->BSRR |= 0x00000001;  	//Set the GPIO
-			delayMs(DELAY); 
-			GPIOC->BSRR |= 0x00010000;    //Clear the GPIO
-			delayMs(DELAY);
-//		uint32_t x = ADC1_BASE;
-//		uint32_t y = ADC2_BASE;
-//		uint32_t z = ADC3_BASE;
-//		GPIOB->PUPDR
-		}
-		break;
-	}
-}
 /* Handle PC13 (bushbutton) interrupt */
 void EXTI15_10_IRQHandler(void) {
 	buttonInterrupt = true;
@@ -387,5 +259,4 @@ void TIM2_IRQHandler(void)
 {
 	TIM2->SR = 0;
 	timer2RolledOver = true;
-	
 }
