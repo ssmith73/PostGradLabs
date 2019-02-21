@@ -15,11 +15,14 @@ volatile bool timer2RolledOver = false;
 void configureGpioPorts(void);
 void turn_on_all_leds(void);
 void turn_off_all_leds(void);
+void write_string(uint8_t *);
 
 void delayMs(int);
 void delay1Hz(void);
 void initTim2(void);
 void initUserSw(void);
+
+void initAdc(void);
 
 typedef enum
 {
@@ -69,6 +72,7 @@ int main(void)
 	uint8_t sw2_pressed = 0;
 	uint8_t sw2_pressed_prev = 0;
 	uint8_t inverted_cylon = 0;
+	uint32_t adcResult = 0;
 
 	__disable_irq();
 	/* Configure the clocks - using MSI as SYSCLK @16MHz */
@@ -89,7 +93,9 @@ int main(void)
 	initUsart();
 	configureGpioPorts();
 	initTim2();
-	
+	initAdc();
+
+	uint8_t str[] = "Led Cylon Display\n";
 	
 	__enable_irq();
 	while (1)
@@ -99,26 +105,27 @@ int main(void)
 		if (!(GPIOA->IDR & 0x00000020))
 		{
 			sw1_pressed = 1;
-			USART2_Write('5');
+		//	USART2_Write('5');
 		}
 		else sw1_pressed = 0;
 
 		if (!(GPIOA->IDR & 0x00000040))
 		{
 			sw2_pressed = 1;
-			USART2_Write('6');
+		//	USART2_Write('6');
 		}
 		else sw2_pressed = 0;
 		
 		if (timer2RolledOver == true)
 		{
 
+			ADC1->CR |= 0x00000002;    //Convst
+			while(!(ADC1->ISR & 0x4)) {}
+			adcResult = ADC1->DR;
 			
-			USART2_Write('S');
-			USART2_Write('e');
-			USART2_Write('a');
-			USART2_Write('n');
-			USART2_Write('\n');
+
+
+
 			timer2RolledOver = false;
 
 			//Check for a change in the state of a switch
@@ -131,6 +138,8 @@ int main(void)
 
 			sw1_pressed_prev = sw1_pressed;
 			sw2_pressed_prev = sw2_pressed;
+
+			/* Basic state machine to handle the LED toggling*/
 
 			switch (next_state) {
 
@@ -158,6 +167,7 @@ int main(void)
 				next_state =  LED3_ON_STATE;
 				GPIOA->BSRR |= inverted_cylon ? 0x00000400 : 0x04000000;  	//Set the GPIO
 				direction = FORWARD; 
+				write_string(str);
 				break;
 			case LED3_ON_STATE: 
 				next_state = LED3_OFF_STATE;
@@ -338,6 +348,14 @@ void initPbInterrupt() {
 	NVIC_EnableIRQ(EXTI15_10_IRQn); //Enable EXTI15-to-10 interrupts
 }
 	 
+void initAdc(void)
+{
+	RCC->AHB2ENR |= 0x20000000; //Enable the ADC clock
+	GPIOA->ASCR  |= 0x00000001; //Connect analog switch to GPIOA[0]
+	GPIOA->MODER |= 0x00000003; //Set A0 for analog input mode
+	ADC1->SQR1   |= 0x00000000; //Set for a sequence of 1 conversion on CH0
+	ADC1->CR	 |= 0x00000001; //Enable ADC1
+}
 
 void turn_on_all_leds(void)
 {
@@ -408,6 +426,12 @@ void configureGpioPorts()
 
 }
 
+void write_string(uint8_t *str)
+{
+	while (*str)
+		USART2_Write(*str++);
+		
+}
 void USART2_Write(uint8_t ch) {
 	
 	while (!(USART2->ISR & 0x0080)) {}
