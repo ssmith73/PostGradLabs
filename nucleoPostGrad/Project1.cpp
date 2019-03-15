@@ -6,12 +6,10 @@
 extern "C"
 #endif
 
-#define DELAY 500
 void TIM2_IRQHandler(void);
 void EXTI15_10_IRQHandler(void);
 volatile bool buttonInterrupt = false;
 volatile bool timer2RolledOver = false;
-
 
 void configureGpioPorts(void);
 void write_string(char *);
@@ -30,11 +28,6 @@ typedef enum
 	SHIELD_SW1,
 	SHIELD_SW2
 } SWITCHES;
-void initSwitch(SWITCHES);
-void initUsart(void);
-void initPbInterrupt(void);
-
-void USART2_Write(uint8_t ch);
 
 typedef enum {
 	NORMAL,
@@ -67,6 +60,11 @@ typedef enum
 	LED9_ON_STATE,
 	LED9_OFF_STATE,
 } STATES;
+void initSwitch(SWITCHES);
+void initUsart(void);
+void USART2_Write(uint8_t ch);
+
+void initPbInterrupt(void); //not used
 
 int main(void)
 {
@@ -78,21 +76,16 @@ int main(void)
 	int adcResult = 0;
 
 	__disable_irq();
-	/* Configure the clocks - using MSI as SYSCLK @16MHz */
-	RCC->CR 		 	&= 	0xFFFFFF07;        //Clear ~MSIRANGE bits and MSIRGSEL bit
-	RCC->CR 		 	|= 	0x00000089;        //Set MSI to 16MHz and MSIRGSEL bit
+	/* Configure the system clock - using MSI as SYSCLK @16MHz */
+	RCC->CR 		&= 	0xFFFFFF07;        //Clear ~MSIRANGE bits and MSIRGSEL bit
+	RCC->CR 		|= 	0x00000089;        //Set MSI to 16MHz and MSIRGSEL bit
 
-	RCC->AHB2ENR 	|= 	0x00000001;        //Enable PA5 clocks - for on-board LED
-	
-	/* Enable PA0 for output */
-	GPIOA->MODER 	&= 	0xFFFFF3FF;        //Clear GPIOA[5] MODER bits
+	//Enable PA5 clocks - for on-board LED (Nucleo)
+	RCC->AHB2ENR 	|= 	0x00000001;		   //Enable GPIO port A clk        
+	GPIOA->MODER 	&= 	0xFFFFF3FF;        //Clear  GPIOA[5] MODER bits
 	GPIOA->MODER 	|= 	0x00000400;        //Enable GPIOA[5] for output
 	
-	/* Configure Timer 2
-	Assumes 16MHz system clock, rolls over
-	at 1Hz intervals */
-	//initPbInterrupt();
-	initUserSw();
+	initUserSw();							//Enable SW1
 	initUsart();
 	configureGpioPorts();
 	initTim2();
@@ -103,13 +96,13 @@ int main(void)
 	__enable_irq();
 	while (1)
 	{
-	
 		//Check switch state - consider debounce later
+		//Note - switches have pull-up - so set when not pressed!
 		if(!(GPIOA->IDR & 0x00000040))
 		{
-			sw1_pressed = 1;
+			sw1_pressed = 0;
 		}
-		else sw1_pressed = 0;
+		else sw1_pressed = 1;
 
 		
 		if (timer2RolledOver == true)
@@ -123,7 +116,9 @@ int main(void)
 
 			sw1_pressed_prev = sw1_pressed;
 
-			/* Basic state machine to handle the LED toggling*/
+			/* Basic state machine to handle the LED toggling
+			   Operates at 0.25Hz, using a timer interrupt
+			 */
 
 			switch (next_state) {
 
@@ -140,7 +135,6 @@ int main(void)
 						display_mode = NORMAL;
 					else
 						display_mode = INVERSE;
-
 				}
 				else
 					next_state = READ_ADC;
@@ -242,9 +236,9 @@ int main(void)
 	}
 }
 
-// delay in mS, off a sysTick - assumes HSI @ 16MHz
 
 void delayMs(int n) {
+	// delay in mS, off a sysTick - assumes HSI @ 16MHz
 	uint16_t i;
 	/* Configure SysTick 
 	Let sysclk (MSI) = 16MHz, 2/sysclk = 62.5nS  - for 1mS delay
@@ -267,14 +261,18 @@ void initTim2() {
 	 * to give a 1Hz rollover
 	 *
 	 * To rollover at 1/4Sec - make reload value 1000/4
+	 * but asked to move LED's at 0.25s - flash on/off
+	 * should be half this - so /8
+	 * Priority of interrupt may have to be changed to give
+	 * this interrupt a higher priority to ensure delays actually work
 	 **/
 
-	RCC->APB1ENR1	|= 0x1;         		//Enable timer 2
+	RCC->APB1ENR1	|= 0x1;        		//Enable timer 2
 	TIM2->PSC 		= 16000 - 1;      	//Prescalar value - divide 16MHz by 16000
-	TIM2->ARR 		= (1000) / 4 - 1;      	//Reload value
+	TIM2->ARR 		= (1000 / 8) - 1;  	//Reload value
 	TIM2->CR1		= 1;      			//enable timer
 	TIM2->DIER      |= 1;      			//enable interrupt
-	NVIC_EnableIRQ(TIM2_IRQn);      		//Enable the interrupt in the NVIC
+	NVIC_EnableIRQ(TIM2_IRQn);      	//Enable the interrupt in the NVIC
 }
 
 
@@ -284,6 +282,8 @@ void 	delay1Hz() {
 	   in the prescalar, and then set the reload value for
 	   10000 to give the 1Hz - 1/16MHz = 62.5ns
 	   1600 * 62.5nS = 0.0001S = 100uS, *10000 = 1S
+	   Not actually using this for this lab, only 
+	   written to test the timers, interrupt is a better way
 	*/
 	TIM2->CNT 		= 0;       	//Clear the count register
 	TIM2->CR1 		= 1;        //Start the counter
@@ -293,11 +293,10 @@ void 	delay1Hz() {
 }
 
 
-
 void initUserSw() {
 	/* Configure switch on the Nucleo board*/
-	RCC->AHB2ENR 	|= 0x4;       			//ENABLE GPIOC port clk
-	GPIOC->MODER 	&= 0xF3FFFFFF;      		//Clear GPIOC[13] for input mode
+	RCC->AHB2ENR 	|= 0x4;       		//ENABLE GPIOC port clk
+	GPIOC->MODER 	&= 0xF3FFFFFF;      //Clear GPIOC[13] for input mode
 
 	/* Configure the 2 switches on the Arduino shield
 	   The Pushbutton Switches on the board are connected as
@@ -305,11 +304,13 @@ void initUserSw() {
 		S2: D13 – PA5
 		Switches are to ground - so need to enable pull-up's on them
 		2-bits per port-bit, 0x1 is pull-up
+		S2 won't actually be used as it's conflicting with the 
+		LED on the Nucleo board - also connected to PA5
 	*/
-	RCC->AHB2ENR 	|= 0x1;       			//ENABLE GPIOA port clk
-	GPIOA->MODER 	&= 0xFFFFCFFF;      		//Clear GPIOA[6] for input mode
-	GPIOA->PUPDR	&= 0xFFFFCFFF;           //clear the PA6 pupdx bits
-	GPIOA->PUPDR	|= 0x00001000;           //Enable the pull-up on PA6
+	RCC->AHB2ENR 	|= 0x1;       		//ENABLE GPIOA port clk
+	GPIOA->MODER 	&= 0xFFFFCFFF;      //Clear GPIOA[6] for input mode
+	GPIOA->PUPDR	&= 0xFFFFCFFF;      //clear the PA6 pupdx bits
+	GPIOA->PUPDR	|= 0x00001000;      //Enable the pull-up on PA6
 }
 
 void initUsart() {
@@ -328,48 +329,49 @@ void initUsart() {
 			USART_DIV = 16MHz/115200 => 138.88 - say 139 = 0x8B
 			USART_BRR = 0x8B
 		AF's PA2 - USART2 TX ->AF7, PA3 USART2 RX AF7
-     */
+	 */
 
-	RCC->AHB2ENR 	|= RCC_AHB2RSTR_GPIOARST_Msk;      	//Enable the clock for GPIOA
-	RCC->APB1ENR1	|= RCC_APB1ENR1_USART2EN_Msk;      	//Enable the USART2 clock
-	GPIOA->MODER 	&= 0xFFFFFF0F;       					//Clear PA2/3 bits
-	GPIOA->MODER 	|= 0x000000A0;       					//Set PA2/3 for AF mode
-	GPIOA->AFR[0]   &= 0xFFFF00FF;      					//Clear the AF bits for 2&3
-	GPIOA->AFR[0]   |= 0x00007700;      					//Set both AF modes to AF7, for bits 2/3
-	USART2->BRR		&= 0x0000;      						//clear BAUD Rate bits 
-	USART2->BRR		|= 0x008B;      						//Set BAUD Rate to 115200 with UartClk at 16MHz
-	USART2->CR1     &= 0xEFFF6FFE;      					//Clear the M1,OVER8,M0 bits, set 1 start-bit, 8-data bits n stop-bits, keep UE low
-	USART2->CR2     &= 0xFFFFC000;      					//Clear the stop-bits to give 1 stop-bit (default anyway)
-	USART2->CR1     |= 0x00000009;      					//Enable the TX and the uart
+	RCC->AHB2ENR 	|= RCC_AHB2RSTR_GPIOARST_Msk;	//Enable the clock for GPIOA
+	RCC->APB1ENR1	|= RCC_APB1ENR1_USART2EN_Msk;  	//Enable the USART2 clock
+	GPIOA->MODER 	&= 0xFFFFFF0F;       			//Clear PA2/3 bits
+	GPIOA->MODER 	|= 0x000000A0;       			//Set PA2/3 for AF mode
+	GPIOA->AFR[0]   &= 0xFFFF00FF;      			//Clear the AF bits for 2&3
+	GPIOA->AFR[0]   |= 0x00007700;      			//Set both AF modes to AF7, for bits 2/3
+	USART2->BRR		&= 0x0000;      				//clear BAUD Rate bits 
+	USART2->BRR		|= 0x008B;      				//Set BAUD Rate to 115200 with UartClk at 16MHz
+	USART2->CR1     &= 0xEFFF6FFE;      			//Clear the M1,OVER8,M0 bits, set 1 start-bit, 8-data bits n stop-bits, keep UE low
+	USART2->CR2     &= 0xFFFFC000;      			//Clear the stop-bits to give 1 stop-bit (default anyway)
+	USART2->CR1     |= 0x00000009;      			//Enable the TX and the uart
 
 }
 
 void initPbInterrupt() {
 	
-	RCC->APB2ENR        |= 1;       			//Enable SYSCFG clk (for GPIO interrupt enables)
-	SYSCFG->EXTICR[3] 	&= ~0x00F0;       	//CLEAR_BIT the EXTI[13] bits
-	SYSCFG->EXTICR[3]   |= 0x20;       		//Enable GPIOC for EXTI[13]
-	EXTI->IMR1 			|= 0x2000;       	//Unmask EXTI13
-	EXTI->FTSR1 		|= 0x2000;        //Enable falling edge triggered interrupts (pushbutton high to low on push)
-	NVIC_EnableIRQ(EXTI15_10_IRQn);       //Enable EXTI15-to-10 interrupts
+	RCC->APB2ENR        |= 1;       	//Enable SYSCFG clk (for GPIO interrupt enables)
+	SYSCFG->EXTICR[3] 	&= ~0x00F0;     //CLEAR_BIT the EXTI[13] bits
+	SYSCFG->EXTICR[3]   |= 0x20;       	//Enable GPIOC for EXTI[13]
+	EXTI->IMR1 			|= 0x2000;      //Unmask EXTI13
+	EXTI->FTSR1 		|= 0x2000;      //Enable falling edge triggered interrupts (pushbutton high to low on push)
+	NVIC_EnableIRQ(EXTI15_10_IRQn);     //Enable EXTI15-to-10 interrupts
 }
 	 
 void initAdc(void)
 {
 	//Need alternate mode to be set - pa0/adc12_in5 input
 	//Poll the ready bit, it can take a while to go high
+
 	 RCC->AHB2ENR	|= 0x00000001;         //Enable GPIOA CLK
 	 RCC->CCIPR		|= 0x30000000;         //Select SYSCLK as ADC clk source
 	 RCC->AHB2ENR	|= 0x00002000;         //Enable the ADC clock
 	  
 	 ADC1->CR		&= 0xDFFFFFFF;         //Take ADC out of deep power down
-	 delayMs(1); 					      //Allow 1mS  - only needs Tadcvreg_stup - 20uS (datasheet p178)
+	 delayMs(1); 						   //Allow 1mS  - only needs Tadcvreg_stup - 20uS (datasheet p178)
 	 ADC1->CR		|= 0x10000000;         //Enable ADC1 votage regulator
-	 ADC1->SMPR1    |= 0x00008000;         //Add a little more sampling time to channel 5
+	 ADC1->SMPR1    |= 0x00008000;         //Add a little more sampling time to channel 5 (6.5 ADC clk cycles)
 	 GPIOA->ASCR	|= 0x00000001;         //Connect analog switch to GPIOA[0]
 	 GPIOA->MODER	|= 0x00000003;         //Set A0 for analog input mode  - actually reset to analog input mode
 	 ADC1->ISR		|= 0x00000001;         //Clear the ADRDY bit in the ADCx_ISR register by writing ‘1’.
-	 ADC1->SQR1		|= 0x00000140;         //Set for a sequence of 1 conversion on CH0
+	 ADC1->SQR1		|= 0x00000140;         //Set for a sequence of 1 conversion on CH5
 	 ADC1->CR		|= 0x00000001;         //Enable ADC1
 	 
 }
@@ -476,24 +478,30 @@ void configureGpioPorts()
 
 void write_string(char *str)
 {
+	/***** Simple pointer manipulation to 
+	       write characters in a string to the UART *****/
 	while (*str)
 		USART2_Write(*str++);
 		
 }
 void USART2_Write(uint8_t ch) {
 	
+	/**** Wait for USART to clear an send a single character *****/
 	while (!(USART2->ISR & 0x0080)) {}
 	USART2->TDR = ch;
 }
 
-/* Handle PC13 (bushbutton) interrupt */
 void EXTI15_10_IRQHandler(void) {
+/**** Handle PC13 (bushbutton) interrupt 
+ **** Not used in this lab - just a test ****/
 	buttonInterrupt = true;
-	EXTI->PR1 = 0x2000;
+	EXTI->PR1 = 0x2000;   //clear pending interrupt
 }
 
 void TIM2_IRQHandler(void)
 {
+	/**** When timer 2 rolls over, set a flag *****/
+	//Should pending bit be reset?
 	TIM2->SR = 0;
 	timer2RolledOver = true;
 }

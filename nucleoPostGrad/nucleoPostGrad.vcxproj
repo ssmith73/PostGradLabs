@@ -47,7 +47,7 @@
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
   <ItemGroup>
-    <ClCompile Include="LEDBlink.cpp" />
+    <ClCompile Include="Project1.cpp" />
     <ClCompile Include="system_stm32l4xx.c" />
     <None Include="stm32.props">
       <SubType>Designer</SubType>
