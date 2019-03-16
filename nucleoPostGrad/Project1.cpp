@@ -3,14 +3,16 @@
 
 
 #ifdef __cplusplus
-extern "C"
+//extern "C"
 #endif
 
-void TIM2_IRQHandler(void);
-void EXTI15_10_IRQHandler(void);
-volatile bool buttonInterrupt = false;
-volatile bool timer2RolledOver = false;
-
+//void ADC1_2_IRQHandler(void);
+//void TIM2_IRQHandler(void);
+//void EXTI15_10_IRQHandler(void);
+#define VREF 3.3
+extern "C" void TIM2_IRQHandler();
+extern "C" void ADC1_2_IRQHandler();
+extern "C" void USART2_IRQHandler();
 void configureGpioPorts(void);
 void write_string(char *);
 
@@ -66,6 +68,14 @@ void USART2_Write(uint8_t ch);
 
 void initPbInterrupt(void); //not used
 
+// Globals for ISR's
+int volatile adcResult = 0;
+volatile char rxChar;
+volatile bool buttonInterrupt = false;
+volatile bool adcComplete = false;
+volatile bool newChar = false;
+volatile bool timer2RolledOver = false;
+
 int main(void)
 {
 	STATES next_state = IDLE_STATE;
@@ -73,7 +83,8 @@ int main(void)
 	uint8_t sw1_pressed = 0;
 	uint8_t sw1_pressed_prev = 0;
 	uint8_t inverted_cylon = 0;
-	int adcResult = 0;
+	bool returnVAdc = true;
+	float VAdc = 0;
 
 	__disable_irq();
 	/* Configure the system clock - using MSI as SYSCLK @16MHz */
@@ -107,6 +118,16 @@ int main(void)
 		
 		if (timer2RolledOver == true)
 		{
+			if (newChar)
+			{
+				str[0] = rxChar;
+				str[1] = '\0';
+//				char dataPtr[2];
+//				sprintf(dataPtr, "ADC-result %lu\n",rxChar);
+				write_string(str);
+				newChar = false;
+				
+			}
 
 			timer2RolledOver = false;
 
@@ -141,14 +162,27 @@ int main(void)
 
 				break;
 			case READ_ADC: {
-				next_state = IDLE_STATE;
-				ADC1->CR |= 0x00000004;          //Convst
-				while(!(ADC1->ISR & 0x4)) {}
-				adcResult = ADC1->DR;
-				
 				char dataPtr[50];
-				sprintf(dataPtr, "ADC-result %d\n", adcResult);
-				write_string(dataPtr);
+				next_state = READ_ADC;
+
+				
+
+				//while(!(ADC1->ISR & 0x4)) {}
+				//adcResult = ADC1->DR;
+				
+				if (adcComplete == true)
+				{
+					if (returnVAdc == true)
+						sprintf(dataPtr, "ADC-result %f\n", VAdc = (VREF / (4096 - 1))*adcResult);
+					else
+						sprintf(dataPtr, "ADC-result %d\n",  adcResult);
+						
+					adcComplete = false;
+					write_string(dataPtr);
+				}
+				else
+					ADC1->CR |= 0x00000004;           //Convst
+
 				//Clear the led's
 				led_control(0x00);
 				//Turn on LED's according to the ADC-Read value
@@ -341,7 +375,9 @@ void initUsart() {
 	USART2->BRR		|= 0x008B;      				//Set BAUD Rate to 115200 with UartClk at 16MHz
 	USART2->CR1     &= 0xEFFF6FFE;      			//Clear the M1,OVER8,M0 bits, set 1 start-bit, 8-data bits n stop-bits, keep UE low
 	USART2->CR2     &= 0xFFFFC000;      			//Clear the stop-bits to give 1 stop-bit (default anyway)
-	USART2->CR1     |= 0x00000009;      			//Enable the TX and the uart
+	USART2->CR1     |= 0x0000002D;      			//Enable Receive interrupt, RX/TX and the uart itself
+	NVIC_EnableIRQ(USART2_IRQn);					//Enable interrupts for this usart
+
 
 }
 
@@ -357,21 +393,35 @@ void initPbInterrupt() {
 	 
 void initAdc(void)
 {
-	//Need alternate mode to be set - pa0/adc12_in5 input
-	//Poll the ready bit, it can take a while to go high
 
+	 /* ADC input is on PA4 - Page 73 of datasheet, 
+	  *   alternate-function of PA4 -> ADC12_IN9
+	  * Controlled with an interrupt
+	  * Need to enable EOC interrupt - ADC_IER[2]
+	  * 
+	  *   alternate-function of PA0 -> ADC12_IN5
+		 //ADC1->SMPR1  |= 0x00008000;         //Add a little more sampling time to channel 5 (6.5 ADC clk cycles)
+		 //GPIOA->ASCR	|= 0x00000001;         //Connect analog switch to GPIOA[0]
+		 //GPIOA->MODER	|= 0x00000003;         //Set A0 for analog input mode  - actually reset to analog input mode
+		 //ADC1->SQR1	|= 0x00000140;         //Set for a sequence of 1 conversion on CH5
+	  */
 	 RCC->AHB2ENR	|= 0x00000001;         //Enable GPIOA CLK
 	 RCC->CCIPR		|= 0x30000000;         //Select SYSCLK as ADC clk source
 	 RCC->AHB2ENR	|= 0x00002000;         //Enable the ADC clock
 	  
 	 ADC1->CR		&= 0xDFFFFFFF;         //Take ADC out of deep power down
 	 delayMs(1); 						   //Allow 1mS  - only needs Tadcvreg_stup - 20uS (datasheet p178)
+	 GPIOA->ASCR	|= 0x00000010;         //Connect analog switch to GPIOA[4]
+	 GPIOA->MODER	|= 0x00000300;         //Set A4 for analog input mode  - actually reset to analog input mode
 	 ADC1->CR		|= 0x10000000;         //Enable ADC1 votage regulator
-	 ADC1->SMPR1    |= 0x00008000;         //Add a little more sampling time to channel 5 (6.5 ADC clk cycles)
-	 GPIOA->ASCR	|= 0x00000001;         //Connect analog switch to GPIOA[0]
-	 GPIOA->MODER	|= 0x00000003;         //Set A0 for analog input mode  - actually reset to analog input mode
+	 //ADC123_COMMON->CCR |= 0x00400000;     //Enable Vrefint
+
+	 ADC1->IER		|= 0x00000004;         //Enable ADC1 EOC interrupt
+	 NVIC_EnableIRQ(ADC1_2_IRQn);			   //Enable interrupts on ADC1
+
+	 ADC1->SMPR1    |= 0x08008000;         //Add a little more sampling time to channel 9 (6.5 ADC clk cycles)
 	 ADC1->ISR		|= 0x00000001;         //Clear the ADRDY bit in the ADCx_ISR register by writing ‘1’.
-	 ADC1->SQR1		|= 0x00000140;         //Set for a sequence of 1 conversion on CH5
+	 ADC1->SQR1		|= 0x00000240;         //Set for a sequence of 1 conversion on CH9 _01001_00_0000
 	 ADC1->CR		|= 0x00000001;         //Enable ADC1
 	 
 }
@@ -479,7 +529,7 @@ void configureGpioPorts()
 void write_string(char *str)
 {
 	/***** Simple pointer manipulation to 
-	       write characters in a string to the UART *****/
+		   write characters in a string to the UART *****/
 	while (*str)
 		USART2_Write(*str++);
 		
@@ -505,3 +555,14 @@ void TIM2_IRQHandler(void)
 	TIM2->SR = 0;
 	timer2RolledOver = true;
 }
+
+void ADC1_2_IRQHandler(void) {
+	adcComplete = true;
+	adcResult = ADC1->DR;
+}
+void USART2_IRQHandler(void) {
+	newChar = true;
+	rxChar = USART2->RDR; //ignore parity bit (RDR[8])
+	USART2->ICR |= 0x00000008; //Clear the overrun error flag
+}
+
