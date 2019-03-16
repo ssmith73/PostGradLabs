@@ -92,6 +92,7 @@ int main(void)
 	uint8_t sw1_pressed_prev = 0;
 	uint8_t inverted_cylon = 0;
 	bool returnVAdc = true;
+	bool continuousAdc = false;
 	float VAdc = 0;
 
 	__disable_irq();
@@ -126,17 +127,6 @@ int main(void)
 		
 		if (timer2RolledOver == true)
 		{
-			if (newChar)
-			{
-				str[0] = rxChar;
-				str[1] = '\0';
-//				char dataPtr[2];
-//				sprintf(dataPtr, "ADC-result %lu\n",rxChar);
-				write_string(str);
-				strcpy(str,"Led Cylon Display\n");
-				newChar = false;
-				
-			}
 
 			timer2RolledOver = false;
 
@@ -170,6 +160,30 @@ int main(void)
 					next_state = READ_ADC;
 
 				break;
+			case CHECK_FOR_NEW_CHAR: {
+				//Poll for a new character
+				while((USART2->ISR & 0x00000020) == 0) {}
+
+				rxChar = USART2->RDR;
+				str[0] = rxChar;
+				str[1] = '\0';
+				write_string(str);
+				strcpy(str,"Led Cylon Display\n");
+
+				switch (rxChar)
+				{
+					case 'a': case 'A': { next_state = READ_ADC; returnVAdc = false; break; }
+					case 'v': case 'V': { next_state = READ_ADC; returnVAdc = true ; break; }
+					case 'c': case 'C': { next_state = READ_ADC; continuousAdc = true ; break; }
+					case 'e': case 'E': { next_state = READ_ADC; continuousAdc = false ; break; }
+				default:
+					break;
+				}
+				
+				break;
+				
+			}
+
 			case READ_ADC: {
 				char dataPtr[50];
 				next_state = READ_ADC;
@@ -571,7 +585,6 @@ void ADC1_2_IRQHandler(void) {
 }
 void USART2_IRQHandler(void) {
 	newChar = true;
-	rxChar = USART2->RDR; //ignore parity bit (RDR[8])
 	USART2->ICR |= 0x00000008; //Clear the overrun error flag
 }
 
