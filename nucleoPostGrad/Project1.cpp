@@ -1,5 +1,6 @@
 #include <stm32l4xx.h>
 #include <stdio.h>
+#include <string.h>
 
 
 #ifdef __cplusplus
@@ -44,6 +45,13 @@ typedef enum
 typedef enum
 {
 	IDLE_STATE,
+	CHECK_FOR_NEW_CHAR,
+	SINGLE_ADC_VALUE,
+	OUTPUT_PERIOD_555,
+	OUTPUT_HIGH_TIME_555,
+	OUTPUT_LOW_TIME_555,
+	OUTPUT_FREQ_555,
+	CONTINUOUS_ADC_VALUES,
 	READ_ADC,
 	LED2_ON_STATE,
 	LED2_OFF_STATE,
@@ -125,6 +133,7 @@ int main(void)
 //				char dataPtr[2];
 //				sprintf(dataPtr, "ADC-result %lu\n",rxChar);
 				write_string(str);
+				strcpy(str,"Led Cylon Display\n");
 				newChar = false;
 				
 			}
@@ -375,7 +384,7 @@ void initUsart() {
 	USART2->BRR		|= 0x008B;      				//Set BAUD Rate to 115200 with UartClk at 16MHz
 	USART2->CR1     &= 0xEFFF6FFE;      			//Clear the M1,OVER8,M0 bits, set 1 start-bit, 8-data bits n stop-bits, keep UE low
 	USART2->CR2     &= 0xFFFFC000;      			//Clear the stop-bits to give 1 stop-bit (default anyway)
-	USART2->CR1     |= 0x0000002D;      			//Enable Receive interrupt, RX/TX and the uart itself
+	USART2->CR1     |= 0x0000008D;      			//Enable Transmit interrupt, RX/TX and the uart itself
 	NVIC_EnableIRQ(USART2_IRQn);					//Enable interrupts for this usart
 
 
