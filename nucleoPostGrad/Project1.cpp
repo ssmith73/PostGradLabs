@@ -1,15 +1,13 @@
 #include <stm32l4xx.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 
 #ifdef __cplusplus
 //extern "C"
 #endif
 
-//void ADC1_2_IRQHandler(void);
-//void TIM2_IRQHandler(void);
-//void EXTI15_10_IRQHandler(void);
 #define VREF 3.3
 extern "C" void TIM2_IRQHandler();
 extern "C" void ADC1_2_IRQHandler();
@@ -70,9 +68,10 @@ typedef enum
 	LED9_ON_STATE,
 	LED9_OFF_STATE,
 } STATES;
+
 void initSwitch(SWITCHES);
 void initUsart(void);
-void USART2_Write(uint8_t ch);
+void USART2_Write();
 
 void initPbInterrupt(void); //not used
 
@@ -83,9 +82,11 @@ volatile bool buttonInterrupt = false;
 volatile bool adcComplete = false;
 volatile bool newChar = false;
 volatile bool timer2RolledOver = false;
+char *str;
 
 int main(void)
 {
+	
 	STATES next_state = IDLE_STATE;
 	DIRECTIONS direction = FORWARD;
 	uint8_t sw1_pressed = 0;
@@ -111,30 +112,24 @@ int main(void)
 	initTim2();
 	initAdc();
 
-	char str[] = "Led Cylon Display\n";
 	DISPLAYMODES display_mode = NORMAL;	
+	str = (char *) malloc(25);
+	strcpy(str, "Program Start\n");
+
 	__enable_irq();
 	while (1)
 	{
-		//Check switch state - consider debounce later
-		//Note - switches have pull-up - so set when not pressed!
-		if(!(GPIOA->IDR & 0x00000040))
-		{
-			sw1_pressed = 0;
-		}
-		else sw1_pressed = 1;
 
+		/* iF there is data in the string buffer - send it out on the UART*/
+
+		if(*str != '\0')
+			NVIC_EnableIRQ(USART2_IRQn);
+		else
+			NVIC_DisableIRQ(USART2_IRQn);
 		
 		if (timer2RolledOver == true)
 		{
-
 			timer2RolledOver = false;
-
-			//Check for a change in the state of a switch
-			if(sw1_pressed_prev != sw1_pressed)
-				next_state = IDLE_STATE;
-
-			sw1_pressed_prev = sw1_pressed;
 
 			/* Basic state machine to handle the LED toggling
 			   Operates at 0.25Hz, using a timer interrupt
@@ -143,41 +138,29 @@ int main(void)
 			switch (next_state) {
 
 			case IDLE_STATE:	
-				if (sw1_pressed) {
-					next_state = LED2_ON_STATE;
-					inverted_cylon =  display_mode == INVERSE;
-					if (display_mode == INVERSE)
-						led_control(0xFF);
-					else
-						led_control(0x00);
-
-					if (display_mode == INVERSE)
-						display_mode = NORMAL;
-					else
-						display_mode = INVERSE;
-				}
-				else
-					next_state = READ_ADC;
-
+				next_state = CHECK_FOR_NEW_CHAR;
 				break;
 			case CHECK_FOR_NEW_CHAR: {
-				//Poll for a new character
-				while((USART2->ISR & 0x00000020) == 0) {}
-
-				rxChar = USART2->RDR;
-				str[0] = rxChar;
-				str[1] = '\0';
-				write_string(str);
-				strcpy(str,"Led Cylon Display\n");
+				//check for a new character
+				if(USART2->ISR & 0x00000020)
+				{
+					rxChar = USART2->RDR;
+					str[0] = rxChar;
+					str[1] = '\0';
+				}
+				else
+					USART2->ICR |= 0x00000008; //Clear the overrun error flag
 
 				switch (rxChar)
 				{
 					case 'a': case 'A': { next_state = READ_ADC; returnVAdc = false; break; }
-					case 'v': case 'V': { next_state = READ_ADC; returnVAdc = true ; break; }
-					case 'c': case 'C': { next_state = READ_ADC; continuousAdc = true ; break; }
+					case 'v': case 'V': { next_state = READ_ADC; returnVAdc = true; break; }
+					case 'c': case 'C': { next_state = READ_ADC; continuousAdc = true; break; }
 					case 'e': case 'E': { next_state = READ_ADC; continuousAdc = false ; break; }
-				default:
-					break;
+					case 's': {next_state = IDLE_STATE;strcpy(str, "You pressed 's'\n");break;}
+					default: {
+						break;
+					}
 				}
 				
 				break;
@@ -185,109 +168,25 @@ int main(void)
 			}
 
 			case READ_ADC: {
-				char dataPtr[50];
-				next_state = READ_ADC;
+					char dataPtr[50];
 
+					next_state = IDLE_STATE;
 				
-
-				//while(!(ADC1->ISR & 0x4)) {}
-				//adcResult = ADC1->DR;
-				
-				if (adcComplete == true)
-				{
-					if (returnVAdc == true)
-						sprintf(dataPtr, "ADC-result %f\n", VAdc = (VREF / (4096 - 1))*adcResult);
-					else
-						sprintf(dataPtr, "ADC-result %d\n",  adcResult);
+					if(adcComplete == true)
+					{
+						if (returnVAdc == true)
+							sprintf(dataPtr, "ADC-result %f\n", VAdc = (VREF / (4096 - 1))*adcResult);
+						else
+							sprintf(dataPtr, "ADC-result %d\n", adcResult);
 						
-					adcComplete = false;
-					write_string(dataPtr);
-				}
-				else
-					ADC1->CR |= 0x00000004;           //Convst
+						strcpy(str, dataPtr);
+						adcComplete = false;
+					}
+					else
+						ADC1->CR |= 0x00000004;            //Convst
 
-				//Clear the led's
-				led_control(0x00);
-				//Turn on LED's according to the ADC-Read value
-				if (adcResult < 512)	   {led_control(0x01); break;}
-				else if (adcResult < 1024) {led_control(0x03); break;}
-				else if (adcResult < 1536) {led_control(0x07); break;}
-				else if (adcResult < 2048) {led_control(0x0F); break;}
-				else if (adcResult < 2560) {led_control(0x1F); break;}
-				else if (adcResult < 3072) {led_control(0x3F); break;}
-				else if (adcResult < 3584) {led_control(0x7F); break;}
-				else					   {led_control(0xFF); break;}
-			}
-								
-			case LED2_ON_STATE: 
-				next_state = LED2_OFF_STATE;
-				GPIOA->BSRR |= inverted_cylon ? 0x04000000 : 0x00000400;        	//Set the GPIO
 				break;
-			case LED2_OFF_STATE: 
-				next_state =  LED3_ON_STATE;
-				GPIOA->BSRR |= inverted_cylon ? 0x00000400 : 0x04000000;        	//Set the GPIO
-				direction = FORWARD; 
-				write_string(str);
-				break;
-			case LED3_ON_STATE: 
-				next_state = LED3_OFF_STATE;
-				GPIOB->BSRR |= inverted_cylon ? 0x00080000 : 0x00000008;        	//Set the GPIO
-				break;
-			case LED3_OFF_STATE: 
-				next_state = direction == BACK ? LED2_ON_STATE : LED4_ON_STATE;
-				GPIOB->BSRR |= inverted_cylon  ? 0x00000008 : 0x00080000;          //Clear the GPIO
-				break;
-			case LED4_ON_STATE: 
-				next_state = LED4_OFF_STATE;
-				GPIOB->BSRR |= inverted_cylon ? 0x00200000 : 0x00000020;        	//Set the GPIO
-				break;
-			case LED4_OFF_STATE: 
-				next_state = direction == BACK ? LED3_ON_STATE : LED5_ON_STATE;
-				GPIOB->BSRR |= inverted_cylon ? 0x00000020 : 0x00200000;          //Clear the GPIO
-				break;
-			case LED5_ON_STATE: 
-				next_state = LED5_OFF_STATE;
-				GPIOB->BSRR |= inverted_cylon ? 0x00100000 : 0x00000010;        	//Set the GPIO
-				break;
-			case LED5_OFF_STATE: 
-				next_state = direction == BACK ? LED4_ON_STATE : LED6_ON_STATE;
-				GPIOB->BSRR |= inverted_cylon ? 0x00000010 : 0x00100000;          //Clear the GPIO
-				break;
-			case LED6_ON_STATE: 
-				next_state = LED6_OFF_STATE;
-				GPIOB->BSRR |= inverted_cylon ? 0x04000000 : 0x00000400;        	//Set the GPIO
-				break;
-			case LED6_OFF_STATE: 
-				next_state = direction == BACK ? LED5_ON_STATE : LED7_ON_STATE;
-				GPIOB->BSRR |= inverted_cylon ? 0x00000400 : 0x04000000;          //Clear the GPIO
-				break;
-			case LED7_ON_STATE: 
-				next_state = LED7_OFF_STATE;
-				GPIOA->BSRR |= inverted_cylon ? 0x01000000 : 0x00000100;        	//Set the GPIO
-				break;
-			case LED7_OFF_STATE: 
-				next_state = direction == BACK ? LED6_ON_STATE : LED8_ON_STATE;
-				GPIOA->BSRR |= inverted_cylon ? 0x00000100 : 0x01000000;          //Clear the GPIO
-				break;
-			case LED8_ON_STATE: 
-				next_state = LED8_OFF_STATE;
-				GPIOC->BSRR |= inverted_cylon ? 0x00020000 : 0x00000002;        	//Set the GPIO
-				break;
-			case LED8_OFF_STATE: 
-				next_state = direction == BACK ? LED7_ON_STATE : LED9_ON_STATE;
-				GPIOC->BSRR |= inverted_cylon ? 0x00000002 : 0x00020000;          //Clear the GPIO
-				break;
-			case LED9_ON_STATE: 
-				next_state = LED9_OFF_STATE;
-				direction = BACK;
-				GPIOC->BSRR |= inverted_cylon ? 0x00010000 : 0x00000001;        	//Set the GPIO
-				break;
-			case LED9_OFF_STATE: 
-				next_state = direction == BACK ? LED8_ON_STATE : LED9_ON_STATE;
-				GPIOC->BSRR |= inverted_cylon ? 0x00000001 : 0x00010000;          //Clear the GPIO
-				direction = BACK;
-				break;
-				
+				}
 			}
 		}
 	}
@@ -398,8 +297,7 @@ void initUsart() {
 	USART2->BRR		|= 0x008B;      				//Set BAUD Rate to 115200 with UartClk at 16MHz
 	USART2->CR1     &= 0xEFFF6FFE;      			//Clear the M1,OVER8,M0 bits, set 1 start-bit, 8-data bits n stop-bits, keep UE low
 	USART2->CR2     &= 0xFFFFC000;      			//Clear the stop-bits to give 1 stop-bit (default anyway)
-	USART2->CR1     |= 0x0000008D;      			//Enable Transmit interrupt, RX/TX and the uart itself
-	NVIC_EnableIRQ(USART2_IRQn);					//Enable interrupts for this usart
+	USART2->CR1     |= 0x0000004D;      			//Enable Transmit-complete interrupt, RX/TX and the uart itself
 
 
 }
@@ -553,15 +451,16 @@ void write_string(char *str)
 {
 	/***** Simple pointer manipulation to 
 		   write characters in a string to the UART *****/
-	while (*str)
-		USART2_Write(*str++);
+	NVIC_EnableIRQ(USART2_IRQn);					//Enable interrupts for this usart
+	while (*str++)
+		//USART2_Write(*str++);
+	NVIC_DisableIRQ(USART2_IRQn);					//Enable interrupts for this usart
 		
 }
-void USART2_Write(uint8_t ch) {
-	
-	/**** Wait for USART to clear an send a single character *****/
-	while (!(USART2->ISR & 0x0080)) {}
-	USART2->TDR = ch;
+void USART2_Write() {
+	/**** Wait for USART to clear and send a single character *****/
+//	while (!(USART2->ISR & 0x0080)) {}
+	//USART2->TDR = ch;
 }
 
 void EXTI15_10_IRQHandler(void) {
@@ -584,7 +483,7 @@ void ADC1_2_IRQHandler(void) {
 	adcResult = ADC1->DR;
 }
 void USART2_IRQHandler(void) {
-	newChar = true;
-	USART2->ICR |= 0x00000008; //Clear the overrun error flag
+	USART2->ICR |= 0x00000040; //Clear the overrun error flag
+	USART2->TDR = *str++;
 }
 
