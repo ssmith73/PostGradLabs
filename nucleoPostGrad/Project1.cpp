@@ -10,17 +10,15 @@
 
 #define VREF 3.3
 extern "C" void TIM2_IRQHandler();
+extern "C" void TIM3_IRQHandler();
 extern "C" void ADC1_2_IRQHandler();
 extern "C" void USART2_IRQHandler();
 void configureGpioPorts(void);
 
 void delayMs(int);
 void delay1Hz(void);
-void initTim2(void);
-void initUserSw(void);
 
 void led_control(uint8_t);
-void initAdc(void);
 
 typedef enum
 {
@@ -70,8 +68,12 @@ typedef enum
 
 void initSwitch(SWITCHES);
 void initUsart(void);
-
 void initPbInterrupt(void);  //not used
+void initTim2(void);
+void initTim3(void);
+void initUserSw(void);
+void initAdc(void);
+void toggleLed(void);
 
 // Globals for ISR's
 int volatile adcResult = 0;
@@ -79,6 +81,7 @@ volatile char rxChar;
 volatile bool buttonInterrupt = false;
 volatile bool adcComplete = false;
 volatile bool newChar = false;
+volatile bool timer3RolledOver = false;
 volatile bool timer2RolledOver = false;
 char *str;
 char *buffer;
@@ -110,6 +113,7 @@ int main(void)
 	initUsart();
 	configureGpioPorts();
 	initTim2();
+	initTim3();
 	initAdc();
 
 	DISPLAYMODES display_mode = NORMAL;	
@@ -121,6 +125,36 @@ int main(void)
 	__enable_irq();
 	while (1)
 	{
+	    //Change the timer3 reload value according to the 
+		//ADC value
+		if (timer3RolledOver)
+		{
+			toggleLed();
+			timer3RolledOver = false;
+			NVIC_DisableIRQ(TIM3_IRQn);
+			if (adcResult < 500) {
+				TIM3->CNT = 0;
+				TIM3->ARR = 50;
+			}
+			else if (adcResult < 1500) {
+				TIM3->CNT = 0;
+				TIM3->ARR = 150;
+			}
+			else if (adcResult < 2500) {
+				TIM3->CNT = 0;
+				TIM3->ARR = 550;
+			}
+			else if (adcResult < 3500) {
+				TIM3->CNT = 0;
+				TIM3->ARR = 1000;
+			}
+			else {
+				TIM3->CNT = 0;
+				TIM3->ARR = 2000;
+			}
+			NVIC_EnableIRQ(TIM3_IRQn);
+
+		}
 
 		/* iF there is data in the string buffer - send it out on the UART*/
 		if (*str != '\0')
@@ -178,7 +212,7 @@ int main(void)
 						ADC1->CR |= 0x00000004; //Convst
 						break;
 					}
-					case 'e': case 'E': { 
+					case 'e': case 'E': {		//Stop continuously displaying ADC voltages
 						continuousAdc = false; 
 						rxChar = '?';			//clear the received character so no repeat
 						break;
@@ -192,66 +226,6 @@ int main(void)
 					}
 				}
 			
-				//break;
-			//}
-//			switch (next_state) {
-//
-//				case IDLE_STATE:	
-//					next_state = CHECK_FOR_NEW_CHAR;
-//					if (adcComplete == true) //Do we have a new conversion?
-//					{
-//						if (returnVAdc == true)
-//							sprintf(dataPtr, "ADC-result %fV\n", VAdc = (VREF / (4096 - 1))*adcResult);
-//						else
-//							sprintf(dataPtr, "ADC-result 0x%x\n", adcResult);
-//						
-//						strcpy(buffer, dataPtr);
-//						adcComplete = false;
-//						if (continuousAdc == false)
-//							rxChar = 'x';
-//
-//						if (*str == '\0') str = buffer;
-//					}
-//
-//					break;
-//				case CHECK_FOR_NEW_CHAR: {
-//					//Clear out the buffer
-//					*buffer = '\0';
-//					//check for a new character
-//					if(USART2->ISR & 0x00000020)
-//						rxChar = USART2->RDR;
-//					else
-//						USART2->ICR |= 0x00000008;  //Clear the overrun error flag
-//
-//					switch(rxChar)
-//					{
-//						case 'a': case 'A': { next_state = READ_ADC; returnVAdc = false;continuousAdc = false; break; }
-//						case 'v': case 'V': { next_state = READ_ADC; returnVAdc = true; continuousAdc = false; break; }
-//						case 'c': case 'C': { next_state = READ_ADC; continuousAdc = true; break; }
-//						case 'e': case 'E': { next_state = READ_ADC; continuousAdc = false; break; }
-//						case 'x': {
-//							rxChar = '?';
-//							next_state = IDLE_STATE;
-//						}
-//						default: {
-//							if (*str == '\0')
-//								str = buffer;
-//							rxChar = '?';
-//							next_state = IDLE_STATE;
-//							break;
-//						}
-//					}
-//				
-//					break;
-//				}
-//
-//			case READ_ADC: {
-//
-//					ADC1->CR |= 0x00000004;              //Convst
-//					next_state = IDLE_STATE;
-//					break;
-//				}
-//			}
 		} //if timer2RolledOver
 	}//while(1)
 } //main()
@@ -274,6 +248,23 @@ void delayMs(int n) {
 	SysTick->CTRL = 0;        					//Stop the timer
 }
 
+void initTim3() {
+	/* Interrupt for Timer3 is #29
+	 * 1/16MHz = 62.5nS -  * 16000 = 1mS
+	 * Futher divide this by 1000, in the reload value
+	 * to give a 1Hz rollover
+	 *
+	 * Priority of interrupt may have to be changed to give
+	 * this interrupt a higher priority to ensure delays actually work
+	 **/
+
+	RCC->APB1ENR1	|= 0x2;        		//Enable timer 3
+	TIM3->PSC 		= 16000 - 1;       	//Prescalar value - divide 16MHz by 16000
+	TIM3->ARR 		= (1000 / 1) - 1;   //Reload value
+	TIM3->CR1		= 1;       			//enable timer
+	TIM3->DIER      |= 1;       		//enable interrupt
+	NVIC_EnableIRQ(TIM3_IRQn);       	//Enable the interrupt in the NVIC
+}
 void initTim2() {
 	/* Interrupt for Timer 2 is #28
 	 * 1/16MHz = 62.5nS -  * 16000 = 1mS
@@ -287,11 +278,11 @@ void initTim2() {
 	 * this interrupt a higher priority to ensure delays actually work
 	 **/
 
-	RCC->APB1ENR1	|= 0x1;         		//Enable timer 2
+	RCC->APB1ENR1	|= 0x1;        		//Enable timer 2
 	TIM2->PSC 		= 16000 - 1;       	//Prescalar value - divide 16MHz by 16000
-	TIM2->ARR 		= (1000 / 1) - 1;   	//Reload value
+	TIM2->ARR 		= (1000 / 1) - 1;  	//Reload value
 	TIM2->CR1		= 1;       			//enable timer
-	TIM2->DIER      |= 1;       			//enable interrupt
+	TIM2->DIER      |= 1;       		//enable interrupt
 	NVIC_EnableIRQ(TIM2_IRQn);       	//Enable the interrupt in the NVIC
 }
 
@@ -352,7 +343,7 @@ void initUsart() {
 	 */
 
 	RCC->AHB2ENR 	|= RCC_AHB2RSTR_GPIOARST_Msk; 	//Enable the clock for GPIOA
-	RCC->APB1ENR1	|= RCC_APB1ENR1_USART2EN_Msk;   	//Enable the USART2 clock
+	RCC->APB1ENR1	|= RCC_APB1ENR1_USART2EN_Msk;   //Enable the USART2 clock
 	GPIOA->MODER 	&= 0xFFFFFF0F;        			//Clear PA2/3 bits
 	GPIOA->MODER 	|= 0x000000A0;        			//Set PA2/3 for AF mode
 	GPIOA->AFR[0]   &= 0xFFFF00FF;       			//Clear the AF bits for 2&3
@@ -519,10 +510,15 @@ void EXTI15_10_IRQHandler(void) {
 	EXTI->PR1 = 0x2000;    //clear pending interrupt
 }
 
+void TIM3_IRQHandler(void)
+{
+	/**** When timer 3 rolls over, set a flag *****/
+	TIM3->SR = 0;
+	timer3RolledOver = true;
+}
 void TIM2_IRQHandler(void)
 {
 	/**** When timer 2 rolls over, set a flag *****/
-	//Should pending bit be reset?
 	TIM2->SR = 0;
 	timer2RolledOver = true;
 }
@@ -534,5 +530,13 @@ void ADC1_2_IRQHandler(void) {
 void USART2_IRQHandler(void) {
 	USART2->ICR |= 0x00000040;  //Clear the overrun error flag
 	USART2->TDR = *str++;
+}
+void toggleLed(void)
+{
+	
+	if (GPIOA->IDR & 0x00000400)
+		GPIOA->BRR |= 0x00000400;
+	else
+		GPIOA->ODR |= 0x00000400;
 }
 
