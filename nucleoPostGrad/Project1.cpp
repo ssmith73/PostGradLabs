@@ -87,6 +87,7 @@ volatile bool newChar = false;
 volatile bool timer3RolledOver = false;
 volatile bool ccEvent = false;
 volatile bool timer2RolledOver = false;
+volatile uint32_t compareData;
 char *str;
 char *buffer;
 
@@ -538,6 +539,7 @@ void TIM1_CC_IRQHandler(void)
 {
 	/**** Capture compare event on timer 1    *****/
 	ccEvent = true;
+	compareData = TIM1->CCR2;
 }
 void TIM2_IRQHandler(void)
 {
@@ -598,7 +600,7 @@ void initTim1(void){
  * CC1x - [1:0]		- 01: cc2 channel is configured as input, i2c is mapped on ti2
  * CCMR1 [15:12]    - Input capture 2 filter - leave it at zero - using edge detection
  *		 [11:10]    - Input capture 2 prescaler - 00 - capture every (rising) edge
- *		 [9:8] = 10 - cc2 channel is configured as input, i2c is mapped on ti1
+ *		 [9:8] = 01 - cc2 channel is configured as input, ic2 is mapped on ti2
  *	     
  * 
  **/
@@ -607,11 +609,11 @@ void initTim1(void){
 	RCC->APB2ENR	|= 0x00000800;		//Enable Timer 1 clock
 	TIM1->PSC 		=  0x00000000;     	//Prescalar value - no-divide
 	TIM1->ARR 		=  0x0000FFFF;      //Reload with full-scale
-	TIM1->CR1		|= 1;      			//enable timer
-	TIM1->DIER      |= 4;       		//enable capture-compare channel 2 interrupt
+	TIM1->CCMR1     |= 0x00000100;      //capture on every rising edge
 	TIM1->CCER      &= 0xFFFFFF0F;      //Clear cc2 polarity bits
 	TIM1->CCER      |= 0x00000010;      //Enable rising edge capture on cc2
-	TIM1->CCMR1     |= 0x00000200;      //capture on every rising edge
+	TIM1->DIER      |= 4;       		//enable capture-compare channel 2 interrupt
+	TIM1->CR1		|= 1;      			//enable timer
 	NVIC_EnableIRQ(TIM1_CC_IRQn);       //Enable TIM1 Capture Compare Interrupt                  
 	
 }
