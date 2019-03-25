@@ -87,7 +87,11 @@ volatile bool newChar = false;
 volatile bool timer3RolledOver = false;
 volatile bool ccEvent = false;
 volatile bool timer2RolledOver = false;
-volatile uint32_t compareData;
+volatile uint16_t compareData[2];
+volatile uint16_t period;
+volatile double frequency;
+volatile uint8_t activeEdge = 0;
+volatile bool dataReady = false;
 char *str;
 char *buffer;
 
@@ -223,6 +227,23 @@ int main(void)
 					case 'e': case 'E': {		//Stop continuously displaying ADC voltages
 						continuousAdc = false; 
 						rxChar = '?';			//clear the received character so no repeat
+						break;
+					}
+					case 't': case 'T': case 'w' : case 'W': { //Measure 555 clock /period/frequncy
+					    if(activeEdge == 0 && !dataReady)
+							NVIC_EnableIRQ(TIM1_CC_IRQn);       //Enable TIM1 Capture Compare Interrupt                  
+						if(dataReady)
+						{
+							period = compareData[1] - compareData[0];
+							frequency = 1.0 / (period*62.5E-9);
+							sprintf(dataPtr, "Capture Data 0x%x : 0x%x : period %d : frequency %f\n",
+								compareData[1],compareData[0],period,frequency );
+							strcpy(buffer, dataPtr);
+							str = buffer;
+
+							rxChar = '?';			//clear the received character so no repeat
+							dataReady = false;
+						}
 						break;
 					}
 					default: {
@@ -535,12 +556,6 @@ void TIM3_IRQHandler(void)
 	TIM3->SR = 0;
 	timer3RolledOver = true;
 }
-void TIM1_CC_IRQHandler(void)
-{
-	/**** Capture compare event on timer 1    *****/
-	ccEvent = true;
-	compareData = TIM1->CCR2;
-}
 void TIM2_IRQHandler(void)
 {
 	/**** When timer 2 rolls over, set a flag *****/
@@ -614,7 +629,6 @@ void initTim1(void){
 	TIM1->CCER      |= 0x00000010;      //Enable rising edge capture on cc2
 	TIM1->DIER      |= 4;       		//enable capture-compare channel 2 interrupt
 	TIM1->CR1		|= 1;      			//enable timer
-	NVIC_EnableIRQ(TIM1_CC_IRQn);       //Enable TIM1 Capture Compare Interrupt                  
 	
 }
 
@@ -630,5 +644,19 @@ void initSysTick(void)
 		=> load = 1ms/200ns= 5000-1clk cycles = 4999 = 0x1387
 	*/
 	SysTick->LOAD = 0x00001387;
+}
+
+void TIM1_CC_IRQHandler(void)
+{
+	/**** Capture compare event on timer 1    *****/
+	compareData[activeEdge] = TIM1->CCR2;
+	if (activeEdge == 1)
+	{
+		NVIC_DisableIRQ(TIM1_CC_IRQn);
+		activeEdge = 0;
+		dataReady = true;
+	}
+	else 
+		activeEdge++;
 }
 
