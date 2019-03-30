@@ -9,6 +9,7 @@
 #endif
 
 #define VREF 3.3
+#define MASTER_PERIOD 62.5e-9
 extern "C" void TIM1_CC_IRQHandler();
 extern "C" void TIM2_IRQHandler();
 extern "C" void TIM3_IRQHandler();
@@ -19,57 +20,9 @@ void configureGpioPorts(void);
 void delayMs(int);
 void delay1Hz(void);
 
-void led_control(uint8_t);
 
-typedef enum
-{
-	NUCLEO_SW,
-	SHIELD_SW1,
-	SHIELD_SW2
-} SWITCHES;
-
-typedef enum {
-	NORMAL,
-	INVERSE
-}DISPLAYMODES;
-
-typedef enum
-{
-	FORWARD,
-	BACK
-}DIRECTIONS;
-typedef enum
-{
-	IDLE_STATE,
-	CHECK_FOR_NEW_CHAR,
-	SINGLE_ADC_VALUE,
-	OUTPUT_PERIOD_555,
-	OUTPUT_HIGH_TIME_555,
-	OUTPUT_LOW_TIME_555,
-	OUTPUT_FREQ_555,
-	CONTINUOUS_ADC_VALUES,
-	READ_ADC,
-	LED2_ON_STATE,
-	LED2_OFF_STATE,
-	LED3_ON_STATE,
-	LED3_OFF_STATE,
-	LED4_ON_STATE,
-	LED4_OFF_STATE,
-	LED5_ON_STATE,
-	LED5_OFF_STATE,
-	LED6_ON_STATE,
-	LED6_OFF_STATE,
-	LED7_ON_STATE,
-	LED7_OFF_STATE,
-	LED8_ON_STATE,
-	LED8_OFF_STATE,
-	LED9_ON_STATE,
-	LED9_OFF_STATE,
-} STATES;
-
-void initSwitch(SWITCHES);
 void initUsart(void);
-void initPbInterrupt(void);  //not used
+void initPbInterrupt(void);   //not used
 void initTim1(void);
 void initTim2(void);
 void initTim3(void);
@@ -80,16 +33,11 @@ void initSysTick(void);
 
 // Globals for ISR's
 int volatile adcResult = 0;
-volatile char rxChar;
 volatile bool buttonInterrupt = false;
 volatile bool adcComplete = false;
-volatile bool newChar = false;
 volatile bool timer3RolledOver = false;
-volatile bool ccEvent = false;
 volatile bool timer2RolledOver = false;
 volatile uint16_t compareData[2];
-volatile uint16_t period;
-volatile double frequency;
 volatile uint8_t activeEdge = 0;
 volatile bool dataReady = false;
 char *str;
@@ -98,27 +46,29 @@ char *buffer;
 int main(void)
 {
 	
-	STATES next_state = IDLE_STATE;
-	DIRECTIONS direction = FORWARD;
-	uint8_t sw1_pressed = 0;
-	uint8_t sw1_pressed_prev = 0;
-	uint8_t inverted_cylon = 0;
+	bool strDone = true;
 	bool returnVAdc = true;
 	bool continuousAdc = false;
+	bool continuous555 = false;
 	bool doConversion = false;
 	float VAdc = 0;
+	uint16_t period;
+	double frequency;
+	float periodInNs;
+	char rxChar = '?';
+	char lastRxChar = '?';
 
 	__disable_irq();
 	/* Configure the system clock - using MSI as SYSCLK @16MHz */
-	RCC->CR 		&= 	0xFFFFFF07;         //Clear ~MSIRANGE bits and MSIRGSEL bit
-	RCC->CR 		|= 	0x00000089;         //Set MSI to 16MHz and MSIRGSEL bit
+	RCC->CR 		&= 	0xFFFFFF07;          //Clear ~MSIRANGE bits and MSIRGSEL bit
+	RCC->CR 		|= 	0x00000089;          //Set MSI to 16MHz and MSIRGSEL bit
 
 	//Enable PA5 clocks - for on-board LED (Nucleo)
-	RCC->AHB2ENR 	|= 	0x00000001; 		   //Enable GPIO port A clk        
-	GPIOA->MODER 	&= 	0xFFFFF3FF;         //Clear  GPIOA[5] MODER bits
-	GPIOA->MODER 	|= 	0x00000400;         //Enable GPIOA[5] for output
+	RCC->AHB2ENR 	|= 	0x00000001;  		   //Enable GPIO port A clk        
+	GPIOA->MODER 	&= 	0xFFFFF3FF;          //Clear  GPIOA[5] MODER bits
+	GPIOA->MODER 	|= 	0x00000400;          //Enable GPIOA[5] for output
 	
-	initUserSw(); 							//Enable SW1
+	initUserSw();  							//Enable SW1
 	initUsart();
 	configureGpioPorts();
 	initTim1();
@@ -126,20 +76,33 @@ int main(void)
 	initTim3();
 	initAdc();
 
-	DISPLAYMODES display_mode = NORMAL;	
 	buffer = (char *) malloc(25);
 	str = (char *) malloc(25);
-	char dataPtr[50];
+	char dataPtr[150];
+	bool firstCaptureDone = false;
 	strcpy(str, "\n\nProgram Start\n\n");
 
 	__enable_irq();
 	while (1)
 	{
-		if (ccEvent == true)
-			ccEvent = false;
-	    //Change the timer3 reload value according to the 
+			
+		lastRxChar = rxChar;
+		//Capture ADC data when it's ready - display it at 1mS intervals
+		if(dataReady)
+		{
+			period = compareData[1] - compareData[0];  //in clkCycles
+			frequency = 1.0 / (period* MASTER_PERIOD);  //make this a constant - or read from RCC register?
+			periodInNs = period * MASTER_PERIOD;  //in clkCycles
+			periodInNs *= 1e6;  //convert to uS
+			if(firstCaptureDone == false)
+				firstCaptureDone = true;
+			else
+				dataReady = false;
+		}
+					
+		//Change the timer3 reload value according to the 
 		//ADC value
-		if (timer3RolledOver)
+		if(timer3RolledOver)
 		{
 			toggleLed();
 			timer3RolledOver = false;
@@ -170,7 +133,10 @@ int main(void)
 
 		/* iF there is data in the string buffer - send it out on the UART*/
 		if (*str != '\0')
+		{
 			NVIC_EnableIRQ(USART2_IRQn);
+			continue;
+		}
 		else
 		{
 			NVIC_DisableIRQ(USART2_IRQn);
@@ -183,7 +149,7 @@ int main(void)
 				sprintf(dataPtr, "ADC-result %fV\n", VAdc = (VREF / (4096 - 1))*adcResult);
 			else
 				sprintf(dataPtr, "ADC-result 0x%x\n", adcResult);
-		
+	
 			strcpy(buffer, dataPtr);
 			adcComplete = false;
 			if (continuousAdc == false)
@@ -191,70 +157,125 @@ int main(void)
 
 			str = buffer;
 		}
+
+		//Only allow the correct character to exit continuous modes
+		//Stay within the loop until string is transmitted
+		if(continuous555 == true && *str != '\0')
+		{
+			if ((rxChar != 'q' || rxChar != 'Q')) {//  && strDone == true) {
+				strDone = false;
+				sprintf(str, "To exit continuous mode - enter 'q' or 'Q'\n");
+				rxChar = 'w';
+			}
+			if (*str == '\0')
+				strDone = true;
+		}
 		
-		if (timer2RolledOver == true)
+		//Main key-pressed loop - operates at 1mS intervals
+		else if(timer2RolledOver == true)
 		{
 			timer2RolledOver = false;
 
-			/* Basic state machine to handle the LED toggling
-			   Operates at 0.25Hz, using a timer interrupt
-			 */
+			//Clear out the buffer
+			*buffer = '\0';
+			//check for a new character
+			if(USART2->ISR & 0x00000020)
+				rxChar = USART2->RDR;
+			else
+				USART2->ICR |= 0x00000008;   //Clear the overrun error flag
 
-				//Clear out the buffer
-				*buffer = '\0';
-				//check for a new character
-				if(USART2->ISR & 0x00000020)
-					rxChar = USART2->RDR;
-				else
-					USART2->ICR |= 0x00000008;  //Clear the overrun error flag
+			switch(rxChar)
+			{
 
-				switch(rxChar)
-				{
-					case 'a': case 'A': case 'v': case 'V': 
-					{ 
-						returnVAdc = (rxChar == 'v' || rxChar == 'V') ? true : false;
-						continuousAdc = false; 
-						ADC1->CR |= 0x00000004; //Convst
-						rxChar = '?';			//clear the received character so no repeat
-						break; 
-					}
-					case 'c': case 'C': {		//Continously return ADC voltage
-						returnVAdc = true;
-						continuousAdc = true; 
-						ADC1->CR |= 0x00000004; //Convst
-						break;
-					}
-					case 'e': case 'E': {		//Stop continuously displaying ADC voltages
-						continuousAdc = false; 
-						rxChar = '?';			//clear the received character so no repeat
-						break;
-					}
-					case 't': case 'T': case 'w' : case 'W': { //Measure 555 clock /period/frequncy
-					    if(activeEdge == 0 && !dataReady)
-							NVIC_EnableIRQ(TIM1_CC_IRQn);       //Enable TIM1 Capture Compare Interrupt                  
-						if(dataReady)
-						{
-							period = compareData[1] - compareData[0];
-							frequency = 1.0 / (period*62.5E-9);
-							sprintf(dataPtr, "Capture Data 0x%x : 0x%x : period %d : frequency %f\n",
-								compareData[1],compareData[0],period,frequency );
-							strcpy(buffer, dataPtr);
-							str = buffer;
+				/* ‘T’ or ‘t’: Report the 555 Timer Output Period in microseconds.
+				*  ‘H’ or ‘h’: Report the 555 Timer Output High Time of its period in microseconds.
+				*  ‘L’ or ‘l’: Report the 555 Timer Output Low Time of its period in microseconds.
+				*  ‘F’ or ‘f’: Report the 555 Timer Output Frequency in kHz 
+				*  ‘W’ or ‘w’: Display the 555 Timer Output Frequency in kHz Continuously at 1 second intervals.
+				*  ‘Q’ or ‘q’: Stop displaying the 555 Timer Output Frequency Continuously
+				*  ‘A’ or ‘a’: Report the ADC0 conversion result. This is the ADC value.
+				*  ‘V’ or ‘v’: Report the ADC0 conversion result in Volts. You must convert the 
+				*      ADC value to Volts. You may use floating point arithmetic for this calculation.
+				*  ‘C’ or ‘c’: Display the ADC Voltage Continuously at 1 second intervals.
+				*  ‘E’ or ‘e’: Stop displaying ADC Voltage Continuously.
+				* Display an ‘Invalid Character’ Message for any other character 
+				* entered (except CR(0x0d) or LF(0x0a). Continuous modes are mutually exclusive: 
+				* display a message telling * the user to halt current continuous mode if 
+				* another command is received in a continuous mode.
+				*/
 
-							rxChar = '?';			//clear the received character so no repeat
-							dataReady = false;
-						}
-						break;
-					}
-					default: {
-						if (*str == '\0')
-							str = buffer;
-						rxChar = '?';
-						next_state = IDLE_STATE;
-						break;
-					}
+			case 'a': case 'A': case 'v': case 'V': 
+				{ 
+					returnVAdc = (rxChar == 'v' || rxChar == 'V') ? true : false;
+					continuousAdc = false; 
+					ADC1->CR |= 0x00000004;  //Convst
+					rxChar = '?'; 			//clear the received character so no repeat
+					break; 
 				}
+			case 'c': case 'C': {
+							//Continously return ADC voltage
+				returnVAdc = true;
+					continuousAdc = true; 
+					ADC1->CR |= 0x00000004;  //Convst
+					break;
+				}
+			case 'e': case 'E': {
+							//Stop continuously displaying ADC voltages
+				continuousAdc = false; 
+					rxChar = '?'; 			//clear the received character so no repeat
+					break;
+				}
+			case 'q': case 'Q':
+			case 't': case 'T':   case 'f': 
+			case 'w': case 'W'	: case 'F': {
 			
+				//Measure 555 clock /period/frequncy
+				if(rxChar == 'w' || rxChar == 'W')
+					continuous555 = true;
+				else if(rxChar == 'q' || rxChar == 'Q')
+					continuous555 = false;
+
+				if (activeEdge == 0 && !dataReady)
+					NVIC_EnableIRQ(TIM1_CC_IRQn);        //Enable TIM1 Capture Compare Interrupt                  
+
+
+				//Skip the first capture because it is invalid
+				if(firstCaptureDone == true)
+				{
+					sprintf(dataPtr, "");
+
+					if (rxChar == 'f' || rxChar == 'F' ||
+						rxChar == 'w' || rxChar == 'W') 
+						sprintf(dataPtr, "555-frequency %.3fKhz\n", frequency / 1000);
+					else if (rxChar == 't' || rxChar == 'T')
+					{
+						sprintf(dataPtr, "555-Period %.3fuS\n", periodInNs);
+						continuous555 = false;
+					}
+
+					strcpy(buffer, dataPtr);
+					str = buffer;
+					if (continuous555 == false)
+						NVIC_DisableIRQ(TIM1_CC_IRQn);
+				}
+				// Stop continuous output from the 555
+				if(continuous555 == false && firstCaptureDone)
+					rxChar = '?';
+				break;
+			}
+			default: {
+							
+				if (rxChar != '?')
+				{
+					sprintf(dataPtr, "Invalid character - try again...\n");
+					strcpy(buffer, dataPtr);
+					str = buffer;
+					rxChar = lastRxChar; //keep the last command if an invalid character was entered
+				}
+				else if (*str == '\0')
+					str = buffer;
+				}
+			}
 		} //if timer2RolledOver
 	}//while(1)
 } //main()
@@ -278,7 +299,8 @@ void delayMs(int n) {
 }
 
 void initTim3() {
-	/* Interrupt for Timer3 is #29
+	/* Using timer 3 to write values to the LED in responce to the ADC value
+	 * Interrupt for Timer3 is #29
 	 * 1/16MHz = 62.5nS -  * 16000 = 1mS
 	 * Futher divide this by 1000, in the reload value
 	 * to give a 1Hz rollover
@@ -431,74 +453,6 @@ void initAdc(void)
 	 
 }
 
-void led_control(uint8_t mask)
-{
-	/*
-	  Each bit of mask represents an led
-	  8'b11001100 will turn on 4 led's 
-
-		LED2 - D2 - PA10
-		LED3 - D3 - PB3
-		LED4 - D4 - PB5
-		LED5 - D5 - PB4
-		LED6 - D6 - PB10
-		LED7 - D7 - PA8
-		LED8 - A5 - PC1
-		LED9 - A4 - PC0
-	 */
-	switch (mask)
-	{
-	case 0x01: {
-			GPIOA->BSRR |= 0x00000400;   		//Set LED2
-			break;
-		}
-	case 0x03: {
-			GPIOA->BSRR |= 0x00000400;   		//Set LED2
-			GPIOB->BSRR |= 0x00000008;       	//Set LED3
-			break;
-		}
-	case 0x07: {
-			GPIOA->BSRR |= 0x00000400;   		//Set LED2
-			GPIOB->BSRR |= 0x00000028;       	//Set LED3/4
-			break;
-		}
-	case 0x0F: {
-			GPIOA->BSRR |= 0x00000400;   		//Set LED2
-			GPIOB->BSRR |= 0x00000038;       	//Set LED3/4/5
-			break;
-		}
-	case 0x1F: {
-			GPIOA->BSRR |= 0x00000400;   		//Set LED2
-			GPIOB->BSRR |= 0x00000438;       	//Set LED3/4/5/6
-			break;
-		}
-	case 0x3F: {
-			GPIOA->BSRR |= 0x00000500;   		//Set LED2/7
-			GPIOB->BSRR |= 0x00000438;       	//Set LED3/4/5/6
-			break;
-		}
-	case 0x7F: {
-			GPIOA->BSRR |= 0x00000500;   		//Set LED2/7
-			GPIOB->BSRR |= 0x00000438;       	//Set LED3/4/5/6
-			GPIOC->BSRR |= 0x00000002;        	//Set LED8
-			break;
-		}
-	case 0xFF: {
-			GPIOA->BSRR |= 0x00000500;   		//Set LED2/7
-			GPIOB->BSRR |= 0x00000438;       	//Set LED3/4/5/6
-			GPIOC->BSRR |= 0x00000003;       	//Set LED8/9
-			break;
-		}
-	default: {
-			//all off
-	   GPIOA->BSRR |= 0x05000000;       	//Clear LED2/7
-	   GPIOB->BSRR |= 0x04380000;       	//Clear LED3/4/5/6
-	   GPIOC->BSRR |= 0x00030000;       	//Clear LED8/9
-	   break;
-		}
-	}
-
-}
 
 
 void configureGpioPorts()
@@ -649,6 +603,7 @@ void initSysTick(void)
 void TIM1_CC_IRQHandler(void)
 {
 	/**** Capture compare event on timer 1    *****/
+	/* Capture 2 edges*/
 	compareData[activeEdge] = TIM1->CCR2;
 	if (activeEdge == 1)
 	{
