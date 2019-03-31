@@ -101,7 +101,8 @@ int main(void)
 		}
 					
 		//Change the timer3 reload value according to the 
-		//ADC value
+		//ADC value - just using some threshold values
+		//Both ARR and CNT can be changed on the fly
 		if(timer3RolledOver)
 		{
 			toggleLed();
@@ -131,7 +132,8 @@ int main(void)
 
 		}
 
-		/* iF there is data in the string buffer - send it out on the UART*/
+		/* iF there is data in the string buffer
+		 * - send it out on the USART2*/
 		if (*str != '\0')
 		{
 			NVIC_EnableIRQ(USART2_IRQn);
@@ -142,7 +144,14 @@ int main(void)
 			NVIC_DisableIRQ(USART2_IRQn);
 		}
 
-		if (adcComplete == true) //Do we have a new conversion?
+
+		/*
+		   Check for a new conversion completion on the ADC
+		   Load buffer with string value - either voltage or ADC-code
+		   Conversions are started in the main case-statement 
+		     monitoring changes on the USART Rx line
+		 */
+		if (adcComplete == true)
 		{
 			*str = '\0';
 			if (returnVAdc == true)
@@ -158,18 +167,6 @@ int main(void)
 			str = buffer;
 		}
 
-		//Only allow the correct character to exit continuous modes
-		//Stay within the loop until string is transmitted
-		if(continuous555 == true && *str != '\0')
-		{
-			if ((rxChar != 'q' || rxChar != 'Q')) {//  && strDone == true) {
-				strDone = false;
-				sprintf(str, "To exit continuous mode - enter 'q' or 'Q'\n");
-				rxChar = 'w';
-			}
-			if (*str == '\0')
-				strDone = true;
-		}
 		
 		//Main key-pressed loop - operates at 1mS intervals
 		else if(timer2RolledOver == true)
@@ -206,6 +203,13 @@ int main(void)
 
 			case 'a': case 'A': case 'v': case 'V': 
 				{ 
+					
+					if (continuous555 == true)
+					{
+						rxChar = 'w';
+						sprintf(str, "To exit continuous mode - enter 'q' or 'Q'\n");
+						continue;
+					}
 					returnVAdc = (rxChar == 'v' || rxChar == 'V') ? true : false;
 					continuousAdc = false; 
 					ADC1->CR |= 0x00000004;  //Convst
@@ -213,28 +217,47 @@ int main(void)
 					break; 
 				}
 			case 'c': case 'C': {
-					//Continously return ADC voltage
-					returnVAdc = true;
-					continuousAdc = true; 
-					ADC1->CR |= 0x00000004;  //Convst
-					break;
+				//Continously return ADC voltage
+				if (continuous555 == true)
+				{
+					rxChar = 'w';
+					sprintf(str, "To exit continuous mode - enter 'q' or 'Q'\n");
+					continue;
 				}
+				returnVAdc = true;
+				continuousAdc = true; 
+				ADC1->CR |= 0x00000004;  //Convst
+				break;
+			}
 			case 'e': case 'E': {
 				//Stop continuously displaying ADC voltages
+				if (continuous555 == true)
+				{
+					rxChar = 'w';
+					sprintf(str, "To exit continuous mode - enter 'q' or 'Q'\n");
+					continue;
+				}
 				continuousAdc = false; 
 				rxChar = '?'; 			//clear the received character so no repeat
 				break;
 			}
+			/* Measure 555 clock /period/frequncy */
 			case 'q': case 'Q':
 			case 't': case 'T':   case 'f': 
 			case 'w': case 'W'	: case 'F': {
 			
-				//Measure 555 clock /period/frequncy
 				if(rxChar == 'w' || rxChar == 'W')
 					continuous555 = true;
 				else if(rxChar == 'q' || rxChar == 'Q')
 					continuous555 = false;
 
+				/* Don't allow continous ADC read mode to be stopped here*/
+				if (continuousAdc == true)
+				{
+					rxChar = 'c';
+					sprintf(str, "To exit continuous mode - enter 'e' or 'E'\n");
+					continue;
+				}
 				NVIC_EnableIRQ(TIM1_CC_IRQn);        //Enable TIM1 Capture Compare Interrupt                  
 
 				//Skip the first capture because it is invalid
