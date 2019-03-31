@@ -68,7 +68,7 @@ int main(void)
 	GPIOA->MODER 	&= 	0xFFFFF3FF;          //Clear  GPIOA[5] MODER bits
 	GPIOA->MODER 	|= 	0x00000400;          //Enable GPIOA[5] for output
 	
-	initUserSw();  							//Enable SW1
+	//initUserSw();  							//Enable SW1
 	initUsart();
 	configureGpioPorts();
 	initTim1();
@@ -90,8 +90,11 @@ int main(void)
 		//Capture ADC data when it's ready - display it at 1mS intervals
 		if(dataReady)
 		{
-			period = compareData[1] - compareData[0];  //in clkCycles
-			frequency = 1.0 / (period* MASTER_PERIOD);  //make this a constant - or read from RCC register?
+			if (compareData[1] < compareData[0])
+				period = (0xFFFF - compareData[0]) + compareData[1];
+			else
+				period = compareData[1] - compareData[0];   //in clkCycles
+			frequency = 1.0 / (period* MASTER_PERIOD);   //make this a constant - or read from RCC register?
 			periodInNs = period * MASTER_PERIOD;  //in clkCycles
 			periodInNs *= 1e6;  //convert to uS
 			if(firstCaptureDone == false)
@@ -244,33 +247,6 @@ int main(void)
 					rxChar = '?'; 			//clear the received character so no repeat
 					break; 
 				}
-			/*
-			case 'c': case 'C': {
-				//Continously return ADC voltage
-				if (continuous555 == true)
-				{
-					rxChar = 'w';
-					sprintf(str, "To exit continuous mode - enter 'q' or 'Q'\n");
-					continue;
-				}
-				returnVAdc = true;
-				continuousAdc = true; 
-				ADC1->CR |= 0x00000004;  //Convst
-				break;
-			}
-			case 'e': case 'E': {
-				//Stop continuously displaying ADC voltages
-				if (continuous555 == true)
-				{
-					rxChar = 'w';
-					sprintf(str, "To exit continuous mode - enter 'q' or 'Q'\n");
-					continue;
-				}
-				continuousAdc = false; 
-				rxChar = '?'; 			//clear the received character so no repeat
-				break;
-			}
-			*/
 
 			/* Measure 555 clock /period/frequncy */
 			case 'q': case 'Q':
@@ -339,6 +315,7 @@ int main(void)
 					rxChar = '?';
 				break;
 			}
+			//Handle invalid characters - treat them all the same
 			default: {
 							
 				if (rxChar != '?')
@@ -398,9 +375,6 @@ void initTim2() {
 	 * Futher divide this by 1000, in the reload value
 	 * to give a 1Hz rollover
 	 *
-	 * To rollover at 1/4Sec - make reload value 1000/4
-	 * but asked to move LED's at 0.25s - flash on/off
-	 * should be half this - so /8
 	 * Priority of interrupt may have to be changed to give
 	 * this interrupt a higher priority to ensure delays actually work
 	 **/
@@ -424,12 +398,11 @@ void 	delay1Hz() {
 	   written to test the timers, interrupt is a better way
 	*/
 	TIM2->CNT 		= 0;        	//Clear the count register
-	TIM2->CR1 		= 1;         //Start the counter
-	while(!(TIM2->SR & 1)) {}   //wait for rollover
-	TIM2->SR &= ~1;        		//Clear UIF bit
-	TIM2->CR1 		= 0;         //Stop the counter
+	TIM2->CR1 		= 1;			//Start the counter
+	while(!(TIM2->SR & 1)) {}		//wait for rollover
+	TIM2->SR &= ~1;        			//Clear UIF bit
+	TIM2->CR1 		= 0;			//Stop the counter
 }
-
 
 void initUserSw() {
 	/* Configure switch on the Nucleo board*/
@@ -513,11 +486,10 @@ void initAdc(void)
 	RCC->AHB2ENR	|= 0x00002000;          //Enable the ADC clock
 	  
 	ADC1->CR		&= 0xDFFFFFFF;          //Take ADC out of deep power down
-	delayMs(1);  						   //Allow 1mS  - only needs Tadcvreg_stup - 20uS (datasheet p178)
-	GPIOA->ASCR	|= 0x00000010;          //Connect analog switch to GPIOA[4]
+	delayMs(1);  						    //Allow 1mS  - only needs Tadcvreg_stup - 20uS (datasheet p178)
+	GPIOA->ASCR	    |= 0x00000010;          //Connect analog switch to GPIOA[4]
 	GPIOA->MODER	|= 0x00000300;          //Set A4 for analog input mode  - actually reset to analog input mode
 	ADC1->CR		|= 0x10000000;          //Enable ADC1 votage regulator
-	//ADC123_COMMON->CCR |= 0x00400000;     //Enable Vrefint
 
 	ADC1->IER		|= 0x00000004;          //Enable ADC1 EOC interrupt
 	NVIC_EnableIRQ(ADC1_2_IRQn); 			   //Enable interrupts on ADC1
