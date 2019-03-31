@@ -213,18 +213,18 @@ int main(void)
 					break; 
 				}
 			case 'c': case 'C': {
-							//Continously return ADC voltage
-				returnVAdc = true;
+					//Continously return ADC voltage
+					returnVAdc = true;
 					continuousAdc = true; 
 					ADC1->CR |= 0x00000004;  //Convst
 					break;
 				}
 			case 'e': case 'E': {
-							//Stop continuously displaying ADC voltages
+				//Stop continuously displaying ADC voltages
 				continuousAdc = false; 
-					rxChar = '?'; 			//clear the received character so no repeat
-					break;
-				}
+				rxChar = '?'; 			//clear the received character so no repeat
+				break;
+			}
 			case 'q': case 'Q':
 			case 't': case 'T':   case 'f': 
 			case 'w': case 'W'	: case 'F': {
@@ -235,9 +235,7 @@ int main(void)
 				else if(rxChar == 'q' || rxChar == 'Q')
 					continuous555 = false;
 
-				if (activeEdge == 0 && !dataReady)
-					NVIC_EnableIRQ(TIM1_CC_IRQn);        //Enable TIM1 Capture Compare Interrupt                  
-
+				NVIC_EnableIRQ(TIM1_CC_IRQn);        //Enable TIM1 Capture Compare Interrupt                  
 
 				//Skip the first capture because it is invalid
 				if(firstCaptureDone == true)
@@ -245,13 +243,37 @@ int main(void)
 					sprintf(dataPtr, "");
 
 					if (rxChar == 'f' || rxChar == 'F' ||
-						rxChar == 'w' || rxChar == 'W') 
-						sprintf(dataPtr, "555-frequency %.3fKhz\n", frequency / 1000);
-					else if (rxChar == 't' || rxChar == 'T')
+						rxChar == 'w' || rxChar == 'W')
+					{
+						
+						if ((rxChar == 'f' || rxChar == 'F') && continuous555 == true)
+						{
+							rxChar = 'w';
+							sprintf(str, "To exit continuous mode - enter 'q' or 'Q'\n");
+							continue;
+						}
+						else
+							sprintf(dataPtr, "555-frequency %.4fKhz\n", frequency / 1000);
+						
+					}
+					else if ((rxChar == 't' || rxChar == 'T') && continuous555 == false)
 					{
 						sprintf(dataPtr, "555-Period %.3fuS\n", periodInNs);
 						continuous555 = false;
 					}
+					else if (rxChar == 't' || rxChar == 'T')
+					{
+						rxChar = 'w';
+						sprintf(str, "To exit continuous mode - enter 'q' or 'Q'\n");
+						continue;
+					}
+					
+					else if(rxChar != 'q' && rxChar != 'Q')
+					{
+						rxChar = 'w';
+						sprintf(str, "To exit continuous mode - enter 'q' or 'Q'\n");
+						continue;
+					} 
 
 					strcpy(buffer, dataPtr);
 					str = buffer;
