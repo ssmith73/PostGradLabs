@@ -202,20 +202,49 @@ int main(void)
 				*/
 
 			case 'a': case 'A': case 'v': case 'V': 
+			case 'c': case 'C': case 'e': case 'E':
 				{ 
 					
+					//don't allow false exit of continuous 
 					if (continuous555 == true)
 					{
 						rxChar = 'w';
 						sprintf(str, "To exit continuous mode - enter 'q' or 'Q'\n");
 						continue;
 					}
+
+					//start ADC conversion
+					if (rxChar == 'c' || rxChar == 'C')
+					{
+						returnVAdc = true; //only voltage returned in continuous mode
+						continuousAdc = true;
+						ADC1->CR |= 0x00000004;  //Convst
+						break;
+					}
+					//End continuous conversions
+					if (continuousAdc == true && (rxChar == 'e' || rxChar == 'E'))
+					{
+						continuousAdc = false;
+						rxChar = '?';
+						continue;
+					}
+					//don't allow false exit of continuous mode
+					if (continuousAdc == true && (rxChar != 'e' || rxChar != 'E'))
+					{
+						rxChar = 'c';
+						sprintf(str, "To exit continuous mode - enter 'e' or 'E'\n");
+						continue;
+					}
+
+					//Not in automatic conversion mode - do convst - 
+					//setup for Volts out or codes out
 					returnVAdc = (rxChar == 'v' || rxChar == 'V') ? true : false;
 					continuousAdc = false; 
 					ADC1->CR |= 0x00000004;  //Convst
 					rxChar = '?'; 			//clear the received character so no repeat
 					break; 
 				}
+			/*
 			case 'c': case 'C': {
 				//Continously return ADC voltage
 				if (continuous555 == true)
@@ -241,6 +270,8 @@ int main(void)
 				rxChar = '?'; 			//clear the received character so no repeat
 				break;
 			}
+			*/
+
 			/* Measure 555 clock /period/frequncy */
 			case 'q': case 'Q':
 			case 't': case 'T':   case 'f': 
