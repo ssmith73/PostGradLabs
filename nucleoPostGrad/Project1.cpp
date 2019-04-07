@@ -5,7 +5,6 @@
 
 
 #ifdef __cplusplus
-//extern "C"
 #endif
 
 #define VREF 3.3
@@ -26,14 +25,12 @@ void initPbInterrupt(void);   //not used
 void initTim1(void);
 void initTim2(void);
 void initTim3(void);
-void initUserSw(void);
 void initAdc(void);
 void toggleLed(void);
 void initSysTick(void);
 
 // Globals for ISR's
 int volatile adcResult = 0;
-volatile bool buttonInterrupt = false;
 volatile bool adcComplete = false;
 volatile bool timer3RolledOver = false;
 volatile bool timer2RolledOver = false;
@@ -68,7 +65,6 @@ int main(void)
 	GPIOA->MODER 	&= 	0xFFFFF3FF;          //Clear  GPIOA[5] MODER bits
 	GPIOA->MODER 	|= 	0x00000400;          //Enable GPIOA[5] for output
 	
-	//initUserSw();  							//Enable SW1
 	initUsart();
 	configureGpioPorts();
 	initTim1();
@@ -101,36 +97,38 @@ int main(void)
 				firstCaptureDone = true;
 			else
 				dataReady = false;
-		}
+	}
 					
 		//Change the timer3 reload value according to the 
-		//ADC value - just using some threshold values
+		//ADC value
 		//Both ARR and CNT can be changed on the fly
+		//Timer3 rolls over at ARR * 1mS - i'll set the 
+		//minimum delay to be around 100mS - to make the 
+		//time between toggles visible
 		if(timer3RolledOver)
 		{
 			toggleLed();
 			timer3RolledOver = false;
 			NVIC_DisableIRQ(TIM3_IRQn);
-			if (adcResult < 500) {
+
+
+			//To avoid clipping and prevent a value of zero in ARR
+			if (adcResult < 0 || adcResult == 0)  
+			{
 				TIM3->CNT = 0;
-				TIM3->ARR = 50;
+				TIM3->ARR = 100;
 			}
-			else if (adcResult < 1500) {
+			else if (adcResult > 4095)
+			{
 				TIM3->CNT = 0;
-				TIM3->ARR = 150;
+				TIM3->ARR = 4095;
 			}
-			else if (adcResult < 2500) {
+			else
+			{
 				TIM3->CNT = 0;
-				TIM3->ARR = 550;
+				TIM3->ARR = adcResult; 
 			}
-			else if (adcResult < 3500) {
-				TIM3->CNT = 0;
-				TIM3->ARR = 1000;
-			}
-			else {
-				TIM3->CNT = 0;
-				TIM3->ARR = 2000;
-			}
+			
 			NVIC_EnableIRQ(TIM3_IRQn);
 
 		}
@@ -170,8 +168,7 @@ int main(void)
 			str = buffer;
 		}
 
-		
-		//Main key-pressed loop - operates at 1mS intervals
+		//This rolls over at 1mS
 		else if(timer2RolledOver == true)
 		{
 			timer2RolledOver = false;
@@ -355,8 +352,8 @@ void initTim3() {
 	/* Using timer 3 to write values to the LED in responce to the ADC value
 	 * Interrupt for Timer3 is #29
 	 * 1/16MHz = 62.5nS -  * 16000 = 1mS
-	 * Futher divide this by 1000, in the reload value
-	 * to give a 1Hz rollover
+	 * Futher divide this by a value proportional to the ADC value, 
+	 * in the reload value to give changing toggle
 	 *
 	 * Priority of interrupt may have to be changed to give
 	 * this interrupt a higher priority to ensure delays actually work
@@ -404,25 +401,6 @@ void 	delay1Hz() {
 	TIM2->CR1 		= 0;			//Stop the counter
 }
 
-void initUserSw() {
-	/* Configure switch on the Nucleo board*/
-	RCC->AHB2ENR 	|= 0x4;        		//ENABLE GPIOC port clk
-	GPIOC->MODER 	&= 0xF3FFFFFF;       //Clear GPIOC[13] for input mode
-
-	/* Configure the 2 switches on the Arduino shield
-	   The Pushbutton Switches on the board are connected as
-		S1: D12 – PA6
-		S2: D13 – PA5
-		Switches are to ground - so need to enable pull-up's on them
-		2-bits per port-bit, 0x1 is pull-up
-		S2 won't actually be used as it's conflicting with the 
-		LED on the Nucleo board - also connected to PA5
-	*/
-	RCC->AHB2ENR 	|= 0x1;        		//ENABLE GPIOA port clk
-	GPIOA->MODER 	&= 0xFFFFCFFF;       //Clear GPIOA[6] for input mode
-	GPIOA->PUPDR	&= 0xFFFFCFFF;       //clear the PA6 pupdx bits
-	GPIOA->PUPDR	|= 0x00001000;       //Enable the pull-up on PA6
-}
 
 void initUsart() {
 	/* USART2 
@@ -453,15 +431,13 @@ void initUsart() {
 	USART2->CR1     &= 0xEFFF6FFE;       			//Clear the M1,OVER8,M0 bits, set 1 start-bit, 8-data bits n stop-bits, keep UE low
 	USART2->CR2     &= 0xFFFFC000;       			//Clear the stop-bits to give 1 stop-bit (default anyway)
 	USART2->CR1     |= 0x0000004D;       			//Enable Transmit-complete interrupt, RX/TX and the uart itself
-
-
 }
 
 void initPbInterrupt() {
 	
-	RCC->APB2ENR        |= 1;        	//Enable SYSCFG clk (for GPIO interrupt enables)
+	RCC->APB2ENR        |= 1;        	 //Enable SYSCFG clk (for GPIO interrupt enables)
 	SYSCFG->EXTICR[3] 	&= ~0x00F0;      //CLEAR_BIT the EXTI[13] bits
-	SYSCFG->EXTICR[3]   |= 0x20;        	//Enable GPIOC for EXTI[13]
+	SYSCFG->EXTICR[3]   |= 0x20;         //Enable GPIOC for EXTI[13]
 	EXTI->IMR1 			|= 0x2000;       //Unmask EXTI13
 	EXTI->FTSR1 		|= 0x2000;       //Enable falling edge triggered interrupts (pushbutton high to low on push)
 	NVIC_EnableIRQ(EXTI15_10_IRQn);      //Enable EXTI15-to-10 interrupts
@@ -474,13 +450,8 @@ void initAdc(void)
 	 *   alternate-function of PA4 -> ADC12_IN9
 	 * Controlled with an interrupt
 	 * Need to enable EOC interrupt - ADC_IER[2]
-	 * 
-	 *   alternate-function of PA0 -> ADC12_IN5
-		//ADC1->SMPR1  |= 0x00008000;         //Add a little more sampling time to channel 5 (6.5 ADC clk cycles)
-		//GPIOA->ASCR	|= 0x00000001;         //Connect analog switch to GPIOA[0]
-		//GPIOA->MODER	|= 0x00000003;         //Set A0 for analog input mode  - actually reset to analog input mode
-		//ADC1->SQR1	|= 0x00000140;         //Set for a sequence of 1 conversion on CH5
 	 */
+
 	RCC->AHB2ENR	|= 0x00000001;          //Enable GPIOA CLK
 	RCC->CCIPR		|= 0x30000000;          //Select SYSCLK as ADC clk source
 	RCC->AHB2ENR	|= 0x00002000;          //Enable the ADC clock
@@ -492,9 +463,9 @@ void initAdc(void)
 	ADC1->CR		|= 0x10000000;          //Enable ADC1 votage regulator
 
 	ADC1->IER		|= 0x00000004;          //Enable ADC1 EOC interrupt
-	NVIC_EnableIRQ(ADC1_2_IRQn); 			   //Enable interrupts on ADC1
+	NVIC_EnableIRQ(ADC1_2_IRQn); 			//Enable interrupts on ADC1
 
-	ADC1->SMPR1    |= 0x08008000;          //Add a little more sampling time to channel 9 (6.5 ADC clk cycles)
+	ADC1->SMPR1     |= 0x08008000;          //Add a little more sampling time to channel 9 (6.5 ADC clk cycles)
 	ADC1->ISR		|= 0x00000001;          //Clear the ADRDY bit in the ADCx_ISR register by writing ‘1’.
 	ADC1->SQR1		|= 0x00000240;          //Set for a sequence of 1 conversion on CH9 _01001_00_0000
 	ADC1->CR		|= 0x00000001;          //Enable ADC1
@@ -545,19 +516,16 @@ void configureGpioPorts()
 }
 
 
-void EXTI15_10_IRQHandler(void) {
-	/**** Handle PC13 (bushbutton) interrupt 
-	 **** Not used in this lab - just a test ****/
-	buttonInterrupt = true;
-	EXTI->PR1 = 0x2000;    //clear pending interrupt
-}
-
+//Timer 3 is used for the delay b/n led blinks
 void TIM3_IRQHandler(void)
 {
 	/**** When timer 3 rolls over, set a flag *****/
 	TIM3->SR = 0;
 	timer3RolledOver = true;
 }
+
+
+//Timer 2 is the delay for checking for a new character on the uart
 void TIM2_IRQHandler(void)
 {
 	/**** When timer 2 rolls over, set a flag *****/
@@ -626,7 +594,7 @@ void initTim1(void){
 	RCC->APB2ENR	|= 0x00000800;		//Enable Timer 1 clock
 	TIM1->PSC 		=  0x00000000;     	//Prescalar value - no-divide
 	TIM1->ARR 		=  0x0000FFFF;      //Reload with full-scale
-	TIM1->CCMR1     |= 0x00000100;      //capture on every rising edge
+	TIM1->CCMR1     |= 0x00000100;      //capture on every edge, map IC2 to TI2
 	TIM1->CCER      &= 0xFFFFFF0F;      //Clear cc2 polarity bits
 	TIM1->CCER      |= 0x00000010;      //Enable rising edge capture on cc2
 	TIM1->DIER      |= 4;       		//enable capture-compare channel 2 interrupt
