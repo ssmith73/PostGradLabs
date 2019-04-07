@@ -86,6 +86,7 @@ int main(void)
 		//Capture ADC data when it's ready - display it at 1mS intervals
 		if(dataReady)
 		{
+			//Check for a rollover and correct for it
 			if (compareData[1] < compareData[0])
 				period = (0xFFFF - compareData[0]) + compareData[1];
 			else
