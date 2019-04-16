@@ -7,6 +7,20 @@
 #ifdef __cplusplus
 #endif
 
+/*
+ * I Used coolTerm to test the UART - i cheated a bit with this
+ * by ensuring it didn't send a newline character.
+ *
+ * ADC conversions do not free-run, they need to be requested 
+ * over the UART, or conversions can be put into continuous mode
+ * subsequently: Just turning the potentiometer will not result
+ * in changes to the blink-rate of the LED (I maintain, the definition
+ * was open to interpretation on this point... :)
+ * 
+ * I also think that because i did it this way, there was no
+ * real need to worry about priorities in the interrupts
+ **/
+
 #define VREF 3.3
 #define MASTER_PERIOD 62.5e-9
 extern "C" void TIM1_CC_IRQHandler();
@@ -19,9 +33,7 @@ void configureGpioPorts(void);
 void delayMs(int);
 void delay1Hz(void);
 
-
 void initUsart(void);
-void initPbInterrupt(void);   //not used
 void initTim1(void);
 void initTim2(void);
 void initTim3(void);
@@ -56,21 +68,23 @@ int main(void)
 	char lastRxChar = '?';
 
 	__disable_irq();
-	/* Configure the system clock - using MSI as SYSCLK @16MHz */
+
+	/* 
+	 * Keeping the system clock at 16MH, no real need for 80MHz
+	 * Configure the system clock - using MSI as SYSCLK @16MHz
+	 */
 	RCC->CR 		&= 	0xFFFFFF07;          //Clear ~MSIRANGE bits and MSIRGSEL bit
 	RCC->CR 		|= 	0x00000089;          //Set MSI to 16MHz and MSIRGSEL bit
 
-	//Enable PA5 clocks - for on-board LED (Nucleo)
-	RCC->AHB2ENR 	|= 	0x00000001;  		   //Enable GPIO port A clk        
-	GPIOA->MODER 	&= 	0xFFFFF3FF;          //Clear  GPIOA[5] MODER bits
-	GPIOA->MODER 	|= 	0x00000400;          //Enable GPIOA[5] for output
+	//Initialise all the peripherals
 	
-	initUsart();
-	configureGpioPorts();
-	initTim1();
-	initTim2();
-	initTim3();
-	initAdc();
+	initUsart();			//usart for commands
+	configureGpioPorts();   //configure 555 inputs
+	initTim1();				//Configure timer for measuring 555 signals				
+	initTim2();				//Used to create a 1mS delay for monitoring key presses
+	initTim3();				//Configure tim3 - used to count out delay b/n LED blinks
+	initAdc();				//configure the ADC
+
 
 	buffer = (char *) malloc(25);
 	str = (char *) malloc(25);
@@ -151,7 +165,7 @@ int main(void)
 		   Check for a new conversion completion on the ADC
 		   Load buffer with string value - either voltage or ADC-code
 		   Conversions are started in the main case-statement 
-		     monitoring changes on the USART Rx line
+			 monitoring changes on the USART Rx line
 		 */
 		if (adcComplete == true)
 		{
@@ -434,15 +448,6 @@ void initUsart() {
 	USART2->CR1     |= 0x0000004D;       			//Enable Transmit-complete interrupt, RX/TX and the uart itself
 }
 
-void initPbInterrupt() {
-	
-	RCC->APB2ENR        |= 1;        	 //Enable SYSCFG clk (for GPIO interrupt enables)
-	SYSCFG->EXTICR[3] 	&= ~0x00F0;      //CLEAR_BIT the EXTI[13] bits
-	SYSCFG->EXTICR[3]   |= 0x20;         //Enable GPIOC for EXTI[13]
-	EXTI->IMR1 			|= 0x2000;       //Unmask EXTI13
-	EXTI->FTSR1 		|= 0x2000;       //Enable falling edge triggered interrupts (pushbutton high to low on push)
-	NVIC_EnableIRQ(EXTI15_10_IRQn);      //Enable EXTI15-to-10 interrupts
-}
 	 
 void initAdc(void)
 {
